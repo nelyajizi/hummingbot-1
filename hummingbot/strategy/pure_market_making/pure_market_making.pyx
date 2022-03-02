@@ -1,4 +1,6 @@
+import datetime
 import logging
+import os
 import time
 from decimal import Decimal
 from math import (
@@ -8,7 +10,7 @@ from math import (
 from typing import (
     Dict,
     List,
-    Optional,
+    Optional, Tuple,
 )
 
 import numpy as np
@@ -40,6 +42,14 @@ from .inventory_cost_price_delegate import InventoryCostPriceDelegate
 from .inventory_skew_calculator cimport c_calculate_bid_ask_ratios_from_base_asset_ratio
 from .inventory_skew_calculator import calculate_total_order_size
 from .pure_market_making_order_tracker import PureMarketMakingOrderTracker
+# from ..__utils__.trailing_indicators.autocorrel_indicator import AutoCorrelIndicator
+from ..__utils__.trailing_indicators.bollinger_bands_indicator import BollingerBandsIndicator
+
+from ..__utils__.trailing_indicators.ema_indicator import EMAIndicator
+from ..__utils__.trailing_indicators.hurst_indicator import HurstIndicator
+from ..__utils__.trailing_indicators.instant_volatility import InstantVolatilityIndicator
+from ..__utils__.trailing_indicators.OrnsteinUhlenbeck import OUModelIndicator
+from ..__utils__.trailing_indicators.rsi_indicator import RSIIndicator
 
 NaN = float("nan")
 s_decimal_zero = Decimal(0)
@@ -52,6 +62,10 @@ cdef class PureMarketMakingStrategy(StrategyBase):
     OPTION_LOG_MAKER_ORDER_FILLED = 1 << 4
     OPTION_LOG_STATUS_REPORT = 1 << 5
     OPTION_LOG_ALL = 0x7fffffffffffffff
+
+    def __init__(self):
+        super().__init__()
+
 
     @classmethod
     def logger(cls):
@@ -92,11 +106,14 @@ cdef class PureMarketMakingStrategy(StrategyBase):
                     status_report_interval: float = 900,
                     minimum_spread: Decimal = Decimal(0),
                     hb_app_notification: bool = False,
-                    order_override: Dict[str, List[str]] = None,
+                    order_override: Dict[str, List[str]] = {},
                     should_wait_order_cancel_confirmation = True,
+                    volatility_buffer_size: int = 200,
+                    lt_volatility_buffer_size: int = 500,
+                    rsi_buffer_size: int = 20,
+                    debug_csv_path: str = '',
+                    half_life: int =  24
                     ):
-        if order_override is None:
-            order_override = {}
         if price_ceiling != s_decimal_neg_one and price_ceiling < price_floor:
             raise ValueError("Parameter price_ceiling cannot be lower than price_floor.")
         self._sb_order_tracker = PureMarketMakingOrderTracker()
@@ -147,11 +164,102 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         self._status_report_interval = status_report_interval
         self._last_own_trade_price = Decimal('nan')
         self._should_wait_order_cancel_confirmation = should_wait_order_cancel_confirmation
-
+        self._avg_vol = InstantVolatilityIndicator(sampling_length=volatility_buffer_size)
+        self._lt_avg_vol = InstantVolatilityIndicator(sampling_length=lt_volatility_buffer_size)
+        self._ema = EMAIndicator(sampling_length=volatility_buffer_size)
+        self._ema_lt = EMAIndicator(sampling_length=2 * volatility_buffer_size)
+        # self._auto_correl = AutoCorrelIndicator(order_refresh_time, sampling_length=volatility_buffer_size)
+        self._last_sampling_timestamp = 0
+        self._latest_parameter_calculation_vol = s_decimal_zero
+        self._ouprocess = OUModelIndicator(sampling_length=lt_volatility_buffer_size)
+        self._rsi = RSIIndicator(sampling_length=volatility_buffer_size)
+        self._bb = BollingerBandsIndicator(sampling_length=volatility_buffer_size)
+        self._hurst = HurstIndicator(sampling_length=lt_volatility_buffer_size)
+        self._debug_csv_path = debug_csv_path
+        try:
+            os.unlink(self._debug_csv_path)
+        except FileNotFoundError:
+            pass
+        self._last_price = -1
+        self._last_rsi = -1
+        self._last_ema = -1
+        self._last_ema_lt = -1
         self.c_add_markets([market_info.market])
 
     def all_markets_ready(self):
         return all([market.ready for market in self._sb_markets])
+
+    @property
+    def hurst(self):
+        return self._hurst
+
+    @hurst.setter
+    def hurst(self, indicator: HurstIndicator):
+        self._hurst = indicator
+
+    @property
+    def bb(self):
+        return self._bb
+
+    @bb.setter
+    def bb(self, indicator: BollingerBandsIndicator):
+        self._bb = indicator
+
+    # @property
+    # def auto_correl(self):
+    #     return self._auto_correl
+    #
+    # @auto_correl.setter
+    # def auto_correl(self, indicator: AutoCorrelIndicator):
+    #     self._auto_correl = indicator
+
+    @property
+    def rsi(self):
+        return self._rsi
+
+    @rsi.setter
+    def rsi(self, indicator: RSIIndicator):
+        self._rsi = indicator
+
+    @property
+    def ouprocess(self):
+        return self._ouprocess
+
+    @ouprocess.setter
+    def ouprocess(self, indicator: OUModelIndicator):
+        self._ouprocess = indicator
+
+    @property
+    def ema(self):
+        return self._ema
+
+    @ema.setter
+    def ema(self, indicator: EMAIndicator):
+        self._ema = indicator
+
+    @property
+    def ema_lt(self):
+        return self._ema_lt
+
+    @ema_lt.setter
+    def ema_lt(self, indicator: InstantVolatilityIndicator):
+        self._ema_lt = indicator
+
+    @property
+    def avg_vol(self):
+        return self._avg_vol
+
+    @avg_vol.setter
+    def avg_vol(self, indicator: InstantVolatilityIndicator):
+        self._avg_vol = indicator
+
+    @property
+    def lt_avg_vol(self):
+        return self._lt_avg_vol
+
+    @lt_avg_vol.setter
+    def lt_avg_vol(self, indicator: InstantVolatilityIndicator):
+        self._lt_avg_vol = indicator
 
     @property
     def market_info(self) -> MarketTradingPairTuple:
@@ -647,6 +755,7 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         if len(warning_lines) > 0:
             lines.extend(["", "*** WARNINGS ***"] + warning_lines)
 
+
         return "\n".join(lines)
 
     # The following exposed Python functions are meant for unit tests
@@ -703,31 +812,290 @@ cdef class PureMarketMakingStrategy(StrategyBase):
                     self.logger().warning(f"WARNING: Some markets are not connected or are down at the moment. Market "
                                           f"making may be dangerous when markets or networks are unstable.")
 
+            self.c_collect_market_variables(timestamp)
+
             proposal = None
-            if self._create_timestamp <= self._current_timestamp:
-                # 1. Create base order proposals
-                proposal = self.c_create_base_proposal()
-                # 2. Apply functions that limit numbers of buys and sells proposal
-                self.c_apply_order_levels_modifiers(proposal)
-                # 3. Apply functions that modify orders price
-                self.c_apply_order_price_modifiers(proposal)
-                # 4. Apply functions that modify orders size
-                self.c_apply_order_size_modifiers(proposal)
-                # 5. Apply budget constraint, i.e. can't buy/sell more than what you have.
-                self.c_apply_budget_constraint(proposal)
+            if self.c_is_algorithm_ready():
+                if self._create_timestamp <= self._current_timestamp:
+                    # 1. Create base order proposals
+                    proposal = self.c_create_base_proposal()
+                    # 2. Apply functions that limit numbers of buys and sells proposal
+                    self.c_apply_order_levels_modifiers(proposal)
+                    # 3. Apply functions that modify orders price
+                    self.c_apply_order_price_modifiers(proposal)
+                    # 4. Apply functions that modify orders size
+                    self.c_apply_order_size_modifiers(proposal)
+                    # 5. Apply budget constraint, i.e. can't buy/sell more than what you have.
+                    self.c_apply_budget_constraint(proposal)
 
-                if not self._take_if_crossed:
-                    self.c_filter_out_takers(proposal)
+                    if not self._take_if_crossed:
+                        self.c_filter_out_takers(proposal)
 
-            self._hanging_orders_tracker.process_tick()
+                self.log_data()
 
-            self.c_cancel_active_orders_on_max_age_limit()
-            self.c_cancel_active_orders(proposal)
-            self.c_cancel_orders_below_min_spread()
-            if self.c_to_create_orders(proposal):
-                self.c_execute_orders_proposal(proposal)
+                self._hanging_orders_tracker.process_tick()
+
+                self.c_cancel_active_orders_on_max_age_limit()
+                self.c_cancel_active_orders(proposal)
+                self.c_cancel_orders_below_min_spread()
+                if self.c_to_create_orders(proposal):
+                    self.c_execute_orders_proposal(proposal)
+            else:
+                self.logger().info(f"Calculating volatility... ")
+                self.notify_hb_app_with_timestamp(f'algorithm is NOT  ready')
+
         finally:
             self._last_timestamp = timestamp
+
+    def log_data(self):
+        volatility = self._avg_vol.current_value
+        long_term_volatility = self._lt_avg_vol.current_value
+        price = float(self.get_mid_price())
+        date = datetime.datetime.now()
+        avg_ask, avg_bid, lixi, best_ask, best_bid, volume_best_ask, volume_best_bid = self.compute_avg_lob_prices()
+        ema = self.ema.current_value
+        ema_lt = self.ema_lt.current_value
+        mean_rev, mean_rev_speed, realized_vol = self.ouprocess.current_value
+        rsi = self.rsi.current_value
+        # auto_correl = self.auto_correl.current_value
+        order_book = self._market_info.order_book
+        last_trade_price = order_book.last_trade_price
+        last_applied_trade = order_book.last_applied_trade
+        last_trade_price_rest_updated = order_book.last_trade_price_rest_updated
+        bb_mean, bb_up, bb_down = self.bb.current_value
+        hurst = self.hurst.current_value
+        delta_volume = volume_best_ask - volume_best_bid
+
+        if not os.path.exists(self._debug_csv_path):
+            df_header = pd.DataFrame([('date', 'price', 'ema', 'avg_bid', 'avg_ask', 'best_ask', 'best_bid',
+                                       'bb_mean', 'bb_up', 'bb_down', 'ema_lt', 'last_trade_price',
+                                       'lixi', 'volatility', 'long_term_volatility', 'mean_rev',
+                                       'mean_rev_speed', 'realized_vol', 'volume_best_ask',
+                                       'volume_best_bid', 'rsi', 'last_applied_trade',
+                                       'last_trade_price_rest_updated', 'hurst')])
+            df_header.to_csv(self._debug_csv_path, mode='a', header=False, index=False, sep=';')
+
+        # corr = Decimal("9")
+        # if len(auto_correl) != 0:
+        #     corr = auto_correl[0]
+
+        df = pd.DataFrame([[date, price, ema, avg_bid, avg_ask, best_ask, best_bid,
+                            bb_mean, bb_up, bb_down, ema_lt, last_trade_price,
+                            lixi, volatility, long_term_volatility, mean_rev,
+                            mean_rev_speed, realized_vol, volume_best_ask,
+                            volume_best_bid, rsi, last_applied_trade,
+                            last_trade_price_rest_updated, hurst]])
+        df.to_csv(self._debug_csv_path,  mode='a', header=False, index=False, sep=';')
+
+        # a, b = self._debug_csv_path.split('.')
+        # correl_name =  a + '_correl.' + b
+        # correl_df = pd.DataFrame(auto_correl)
+        # correl_df.T.to_csv(correl_name, mode='a', header=False, index=False, sep=';')
+
+    def get_order_book_snapshot(self) -> float:
+        return self.c_get_order_book_snapshot()
+
+    cdef object c_get_order_book_snapshot(self):
+        return self._market_info.order_book.snapshot
+
+    cdef c_collect_market_variables(self, double timestamp):
+        market, trading_pair, base_asset, quote_asset = self._market_info
+        self._last_sampling_timestamp = timestamp
+        price = float(self.get_mid_price())
+        snapshot = self.get_order_book_snapshot()
+        # calibrate ou process:
+        self._hurst.add_sample(price)
+        self._bb.add_sample(price)
+        self._ouprocess.add_sample(price)
+        mean_rev, mean_rev_speed, realized_vol = self.ouprocess.current_value
+        half_life = np.nan
+        if mean_rev_speed != 0:
+            half_life = np.log(2) / mean_rev_speed
+        self._ema.update_half_life(half_life)
+        self._ema.add_sample(price)
+        self.ema_lt.update_half_life(2 * half_life)
+        self.ema_lt.add_sample(price)
+        # self._auto_correl.add_sample(price)
+        self._avg_vol.add_sample(price)
+        self._lt_avg_vol.add_sample(price)
+        self._rsi.add_sample(price)
+
+
+
+    @property
+    def latest_parameter_calculation_vol(self):
+        return self._latest_parameter_calculation_vol
+
+    @latest_parameter_calculation_vol.setter
+    def latest_parameter_calculation_vol(self, value):
+        self._latest_parameter_calculation_vol = value
+
+    def get_volatility(self):
+        vol = Decimal(str(self._avg_vol.current_value))
+        if vol == s_decimal_zero:
+            if self._latest_parameter_calculation_vol != s_decimal_zero:
+                vol = Decimal(str(self._latest_parameter_calculation_vol))
+            else:
+                # Default value at start time if price has no activity
+                vol = Decimal(str( (self.ask_spread + self.bid_spread) / 2))
+        return vol
+
+    def get_long_term_volatility(self):
+        vol = Decimal(str(self._lt_avg_vol.current_value))
+        if vol == s_decimal_zero:
+            if self._latest_parameter_calculation_vol != s_decimal_zero:
+                vol = Decimal(str(self._latest_parameter_calculation_vol))
+            else:
+                # Default value at start time if price has no activity
+                vol = Decimal(str( (self.ask_spread + self.bid_spread) / 2))
+        return vol
+
+    def compute_avg_lob_prices(self)-> Tuple[Decimal, Decimal, Decimal, Decimal,
+                                             Decimal, Decimal, Decimal]:
+        order_book = self._market_info.order_book
+        depth = 20
+
+        bids = order_book.snapshot[0][['price', 'amount']].head(depth)
+        bids.rename(columns={'price': 'bid_price', 'amount': 'bid_volume'}, inplace=True)
+        asks = order_book.snapshot[1][['price', 'amount']].head(depth)
+        asks.rename(columns={'price': 'ask_price', 'amount': 'ask_volume'}, inplace=True)
+        joined_df = pd.concat([bids, asks], axis=1)
+
+        mid_price = np.float(self._market_info.get_mid_price())
+        total_ask_volume = joined_df['ask_volume'].sum()
+        total_bid_volume = joined_df['bid_volume'].sum()
+        weighted_bid_price = (joined_df['bid_volume'] * joined_df['bid_price']).sum()
+        weighted_bid_price /= total_bid_volume
+        weighted_ask_price = (joined_df['ask_volume'] * joined_df['ask_price']).sum()
+        weighted_ask_price /= total_ask_volume
+
+        best_ask = joined_df['ask_price'][0]
+        best_bid = joined_df['bid_price'][0]
+        volume_best_ask = joined_df['ask_volume'][0]
+        volume_best_bid = joined_df['bid_volume'][0]
+
+        lixi = (total_ask_volume + total_bid_volume) * mid_price
+        lixi /= weighted_ask_price - weighted_bid_price
+        lixi = np.log10(lixi)
+        return Decimal(weighted_ask_price), Decimal(weighted_bid_price), \
+               Decimal(lixi), Decimal(best_ask), Decimal(best_bid), Decimal(volume_best_ask),\
+               Decimal(volume_best_bid)
+
+    cdef bint c_is_algorithm_ready(self):
+        return self._avg_vol.is_sampling_buffer_full and self._lt_avg_vol.is_sampling_buffer_full and \
+               self.ema.is_sampling_buffer_full and self.ema_lt.is_sampling_buffer_full and \
+               self.ouprocess.is_sampling_buffer_full and self.rsi.is_sampling_buffer_full and \
+               self.bb.is_sampling_buffer_full and self.hurst.is_sampling_buffer_full
+
+
+    def is_algorithm_ready(self) -> bool:
+        return self.c_is_algorithm_ready()
+
+    def c_buy_sell_signal(self) -> Tuple[bool, bool]:
+        # self.notify_hb_app_with_timestamp("signal determination")
+        if self._last_price == -1:
+            self._last_price = self.get_price()
+            self._last_rsi = self.rsi.current_value
+            self._last_ema = self.ema.current_value
+            self._last_ema_lt = self.ema_lt.current_value
+            return False, False
+
+        depth = 5
+        order_book = self._market_info.order_book
+        last_trade_price = order_book.last_trade_price
+        last_applied_trade = order_book.last_applied_trade
+        bids = order_book.snapshot[0][['price', 'amount']].head(depth)
+        bids.rename(columns={'price': 'bid_price', 'amount': 'bid_volume'}, inplace=True)
+        asks = order_book.snapshot[1][['price', 'amount']].head(depth)
+        asks.rename(columns={'price': 'ask_price', 'amount': 'ask_volume'}, inplace=True)
+        joined_df = pd.concat([bids, asks], axis=1)
+
+        total_ask_volume = joined_df['ask_volume'].sum()
+        total_bid_volume = joined_df['bid_volume'].sum()
+        total_Imbalance = total_bid_volume / (total_bid_volume + total_ask_volume)
+
+        ask_volume = joined_df['ask_volume'][0]
+        bid_volume = joined_df['bid_volume'][0]
+        Imbalance = bid_volume / (ask_volume + bid_volume)
+
+        volatility = self._avg_vol.current_value
+        long_term_volatility = self._lt_avg_vol.current_value
+        price = float(self.get_mid_price())
+        ema = self.ema.current_value
+        lt_ema = self.ema_lt.current_value
+
+        rsi = self.rsi.current_value
+        bb_mean, bb_up, bb_down = self.bb.current_value
+
+        # buy_bb_sig = (price < bb_down) and (rsi < 30)
+        buy_imb_sig = Imbalance > 0.75
+        buy_ema_sig = (ema > lt_ema) and (self._last_ema < self._last_ema_lt)
+        buy_rsi_sig = (self._last_rsi < rsi) and (rsi > 30)
+
+        # sell_bb_sig = (price > bb_up) and (rsi > 70)
+        sell_rsi_sig = (self._last_rsi > rsi) and (rsi > 70)
+        sell_imb_sig = Imbalance < 0.75
+        sell_ema_sig = (ema < lt_ema) and (self._last_ema > self._last_ema_lt)
+        sell_vol_sig = volatility > long_term_volatility
+
+        entryZscore = -1.5
+        exitZscore = 1.5
+        # vol = float((bb_up - bb_mean) / 2)
+        # if vol == 0:
+        #     self.notify_hb_app_with_timestamp("null vol")
+        #     return False, False
+        delta_t = int(self.order_refresh_time)
+        mean_rev, mean_rev_speed, std_dev = self.ouprocess.current_value
+        mean = price * np.exp(-mean_rev_speed * delta_t)
+        mean += mean_rev * (1 - np.exp(-mean_rev_speed * delta_t))
+        variance = std_dev * std_dev * (1 - np.exp(-2 * mean_rev_speed * delta_t)) / (2 * mean_rev_speed)
+        mean += 0.5 * variance
+        vol_model = np.sqrt(variance)
+        bb_vol = vol_model
+        if bb_up != bb_mean:
+            bb_vol = (bb_up - bb_mean) / 2
+        # Zscore = (price - mean) / vol_model
+        Zscore = (price - bb_mean) / bb_vol
+        sell_bb_sig = Zscore >= exitZscore
+        buy_bb_sig = Zscore < entryZscore
+
+        # self.notify_hb_app_with_timestamp(f"mean:{mean}  vol:{vol_model}")
+        # self.notify_hb_app_with_timestamp(f"Zscore:{Zscore}")
+        is_buy = (buy_ema_sig or buy_bb_sig) and buy_rsi_sig
+        is_sell = (sell_ema_sig or sell_bb_sig)
+        # is_buy = buy_bb_sig or buy_imb_sig or buy_ema_sig
+        # is_sell = sell_bb_sig or sell_imb_sig or sell_ema_sig
+        # is_buy = buy_bb_sig or buy_ema_sig
+        # is_sell = sell_bb_sig or sell_ema_sig
+        stamp = time.time()
+        a, b = self._debug_csv_path.split('.')
+        signal_name = a + '_signals.' + b
+        if not os.path.exists(signal_name):
+            df_header = pd.DataFrame([('time','price', 'buy_bb_sig',
+                                       'buy_imb_sig', 'buy_ema_sig',
+                                       'buy_rsi_sig', 'sell_bb_sig',
+                                       'sell_imb_sig', 'sell_vol_sig',
+                                       'sell_ema_sig', 'sell_rsi_sig',
+                                       'total_Imbalance', 'Imbalance',
+                                       'mean', 'vol_model', 'Zscore')])
+            df_header.to_csv(signal_name, mode='a', header=False, index=False, sep=';')
+
+        df = pd.DataFrame([[stamp, price, buy_bb_sig, buy_imb_sig,
+                            buy_ema_sig, buy_rsi_sig,
+                            sell_bb_sig, sell_imb_sig, sell_vol_sig,
+                            sell_ema_sig, sell_rsi_sig,
+                            total_Imbalance, Imbalance,
+                            mean, vol_model, Zscore]])
+        df.to_csv(signal_name, mode='a', header=False, index=False, sep=';')
+
+        self._last_price = price
+        self._last_rsi = rsi
+        self._last_ema_lt = lt_ema
+        self._last_ema = ema
+        if is_buy or is_sell:
+            self.notify_hb_app_with_timestamp(f"is_buy: {is_buy}, is_sell: {is_sell}")
+        return buy_bb_sig, sell_bb_sig
+
 
     cdef object c_create_base_proposal(self):
         cdef:
@@ -737,6 +1105,24 @@ cdef class PureMarketMakingStrategy(StrategyBase):
 
         buy_reference_price = sell_reference_price = self.get_price()
 
+        vol = self.get_volatility()
+        long_tem_vol = self.get_long_term_volatility()
+        vol_spread = max(vol - long_tem_vol,s_decimal_zero)
+        # avg_prices:
+        avg_ask, avg_bid, lixi, best_ask, best_bid, volume_best_ask, volume_best_bid = self.compute_avg_lob_prices()
+        buy_reference_price = min(buy_reference_price, best_bid)
+        is_profitable = False
+        if not self._last_own_trade_price.is_nan():
+            # sell_reference_price = max(self._last_own_trade_price, avg_ask)
+            # we want to sell as soon as the profitability is realized, i.e wtr to the mid
+            profitability = (sell_reference_price / self._last_own_trade_price) - 1
+            is_profitable = profitability > Decimal("0.01")
+        else:
+            sell_reference_price = avg_ask
+
+        is_buy, is_sell = self.c_buy_sell_signal()
+        is_sell = is_sell and is_profitable
+        # self.notify_hb_app_with_timestamp(f"c_create_base_proposal")
         if self._inventory_cost_price_delegate is not None:
             inventory_cost_price = self._inventory_cost_price_delegate.get_price()
             if inventory_cost_price is not None:
@@ -768,17 +1154,21 @@ cdef class PureMarketMakingStrategy(StrategyBase):
                         if size > 0 and price > 0:
                             sells.append(PriceSize(price, size))
         else:
-            if not buy_reference_price.is_nan():
+            if not buy_reference_price.is_nan() and is_buy:
+                self.notify_hb_app_with_timestamp(f"buy")
                 for level in range(0, self._buy_levels):
-                    price = buy_reference_price * (Decimal("1") - self._bid_spread - (level * self._order_level_spread))
+                    order_bid_spread = s_decimal_zero   # Decimal(vol_spread + self._bid_spread)
+                    price = buy_reference_price * (Decimal("1") - order_bid_spread - (level * self._order_level_spread))
                     price = market.c_quantize_order_price(self.trading_pair, price)
                     size = self._order_amount + (self._order_level_amount * level)
                     size = market.c_quantize_order_amount(self.trading_pair, size)
                     if size > 0:
                         buys.append(PriceSize(price, size))
-            if not sell_reference_price.is_nan():
+            if not sell_reference_price.is_nan() and is_sell:
+                self.notify_hb_app_with_timestamp(f"sell")
                 for level in range(0, self._sell_levels):
-                    price = sell_reference_price * (Decimal("1") + self._ask_spread + (level * self._order_level_spread))
+                    order_ask_spread = s_decimal_zero   # Decimal(vol_spread + self._ask_spread)
+                    price = sell_reference_price * (Decimal("1") + order_ask_spread + (level * self._order_level_spread))
                     price = market.c_quantize_order_price(self.trading_pair, price)
                     size = self._order_amount + (self._order_level_amount * level)
                     size = market.c_quantize_order_amount(self.trading_pair, size)
@@ -960,6 +1350,8 @@ cdef class PureMarketMakingStrategy(StrategyBase):
             # Get the price above the top bid
             price_above_bid = (ceil(top_bid_price / price_quantum) + 1) * price_quantum
 
+            # avg_price_bid = (ceil(avg_bid / price_quantum) + 1) * price_quantum
+
             # If the price_above_bid is lower than the price suggested by the top pricing proposal,
             # lower the price and from there apply the order_level_spread to each order in the next levels
             proposal.buys = sorted(proposal.buys, key = lambda p: p.price, reverse = True)
@@ -977,6 +1369,8 @@ cdef class PureMarketMakingStrategy(StrategyBase):
             )
             # Get the price below the top ask
             price_below_ask = (floor(top_ask_price / price_quantum) - 1) * price_quantum
+
+            # avg_price_ask = (floor(avg_ask / price_quantum) - 1) * price_quantum
 
             # If the price_below_ask is higher than the price suggested by the pricing proposal,
             # increase your price and from there apply the order_level_spread to each order in the next levels

@@ -53,6 +53,23 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         int64_t _logging_options
         object _last_own_trade_price
         bint _should_wait_order_cancel_confirmation
+        object _avg_vol
+        object _lt_avg_vol
+        object _ema
+        object _ema_lt
+        object _ouprocess
+        double _last_sampling_timestamp
+        object _latest_parameter_calculation_vol
+        str _debug_csv_path
+        object _rsi
+        object _auto_correl
+        object _bb
+        double _last_price
+        double _last_rsi
+        object _hurst
+        double _last_ema
+        double _last_ema_lt
+
 
     cdef object c_get_mid_price(self)
     cdef object c_create_base_proposal(self)
@@ -75,3 +92,8 @@ cdef class PureMarketMakingStrategy(StrategyBase):
     cdef bint c_to_create_orders(self, object proposal)
     cdef c_execute_orders_proposal(self, object proposal)
     cdef set_timers(self)
+
+    cdef bint c_is_algorithm_ready(self)
+    cdef c_collect_market_variables(self, double timestamp)
+    cdef object c_get_order_book_snapshot(self)
+

@@ -128,5 +128,13 @@ order_override: null
 # If the strategy should wait to receive cancellations confirmation before creating new orders during refresh time
 should_wait_order_cancel_confirmation: True
 
+# Buffer size used to store historic samples and calculate volatility
+volatility_buffer_size: null
+
+lt_volatility_buffer_size: null
+
+half_life: null
+
+rsi_buffer_size: null
 # For more detailed information, see:
 # https://docs.hummingbot.io/strategies/pure-market-making/#configuration-parameters

@@ -3,7 +3,6 @@ from decimal import Decimal
 from hummingbot.client.config.config_var import ConfigVar
 from hummingbot.client.config.config_validators import (
     validate_exchange,
-    validate_connector,
     validate_market_trading_pair,
     validate_bool,
     validate_decimal,
@@ -59,7 +58,7 @@ def price_source_market_prompt() -> str:
 def validate_price_source_exchange(value: str) -> Optional[str]:
     if value == pure_market_making_config_map.get("exchange").value:
         return "Price source exchange cannot be the same as maker exchange."
-    return validate_connector(value)
+    return validate_exchange(value)
 
 
 def on_validated_price_source_exchange(value: str):
@@ -357,4 +356,29 @@ pure_market_making_config_map = {
                   type_str="bool",
                   default=True,
                   validator=validate_bool),
+    "volatility_buffer_size":
+        ConfigVar(key="volatility_buffer_size",
+                  prompt="Enter amount of ticks that will be stored to calculate volatility >>> ",
+                  type_str="int",
+                  validator=lambda v: validate_decimal(v, 1, 10000),
+                  default=200),
+    "lt_volatility_buffer_size":
+            ConfigVar(key="lt_volatility_buffer_size",
+                      prompt="Enter amount of ticks that will be stored to calculate long term  volatility >>> ",
+                      type_str="int",
+                      validator=lambda v: validate_decimal(v, 1, 10000),
+                      default=500),
+    "half_life":
+        ConfigVar(key="half_life",
+                  prompt="Enter the initial half life >>> ",
+                  type_str="int",
+                  validator=lambda v: validate_decimal(v, 1, 10000),
+                  default=200),
+    "rsi_buffer_size":
+        ConfigVar(key="rsi_buffer_size",
+                  prompt="Enter the initial half life >>> ",
+                  type_str="int",
+                  validator=lambda v: validate_decimal(v, 1, 10000),
+                  default=20),
+
 }

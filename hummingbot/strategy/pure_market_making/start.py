@@ -1,8 +1,10 @@
+import os
 from typing import (
     List,
     Tuple,
 )
 
+from hummingbot import data_path
 from hummingbot.client.hummingbot_application import HummingbotApplication
 from hummingbot.strategy.market_trading_pair_tuple import MarketTradingPairTuple
 from hummingbot.strategy.order_book_asset_price_delegate import OrderBookAssetPriceDelegate
@@ -16,6 +18,7 @@ from hummingbot.connector.exchange.paper_trade import create_paper_trade_market
 from hummingbot.connector.exchange_base import ExchangeBase
 from decimal import Decimal
 
+import pandas as pd
 
 def start(self):
     try:
@@ -78,6 +81,14 @@ def start(self):
 
         should_wait_order_cancel_confirmation = c_map.get("should_wait_order_cancel_confirmation")
 
+        volatility_buffer_size = c_map.get("volatility_buffer_size").value
+        lt_volatility_buffer_size = c_map.get("lt_volatility_buffer_size").value
+        half_life = c_map.get("half_life").value
+        rsi_buffer_size = c_map.get("rsi_buffer_size").value
+        debug_csv_path = os.path.join(data_path(),
+                                      HummingbotApplication.main_application().strategy_file_name.rsplit('.', 1)[0] +
+                                      f"_{pd.Timestamp.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv")
+
         strategy_logging_options = PureMarketMakingStrategy.OPTION_LOG_ALL
         self.strategy = PureMarketMakingStrategy()
         self.strategy.init_params(
@@ -113,6 +124,11 @@ def start(self):
             hb_app_notification=True,
             order_override={} if order_override is None else order_override,
             should_wait_order_cancel_confirmation=should_wait_order_cancel_confirmation,
+            volatility_buffer_size=volatility_buffer_size,
+            debug_csv_path=debug_csv_path,
+            lt_volatility_buffer_size=lt_volatility_buffer_size,
+            half_life=half_life,
+            rsi_buffer_size=rsi_buffer_size
         )
     except Exception as e:
         self._notify(str(e))
