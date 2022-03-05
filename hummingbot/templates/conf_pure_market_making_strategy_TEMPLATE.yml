@@ -136,5 +136,10 @@ lt_volatility_buffer_size: null
 half_life: null
 
 rsi_buffer_size: null
+
+maximum_spread: null
+
+is_debug: null
+
 # For more detailed information, see:
 # https://docs.hummingbot.io/strategies/pure-market-making/#configuration-parameters

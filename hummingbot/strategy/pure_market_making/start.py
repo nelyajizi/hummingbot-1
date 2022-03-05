@@ -20,6 +20,7 @@ from decimal import Decimal
 
 import pandas as pd
 
+
 def start(self):
     try:
         order_amount = c_map.get("order_amount").value
@@ -85,6 +86,8 @@ def start(self):
         lt_volatility_buffer_size = c_map.get("lt_volatility_buffer_size").value
         half_life = c_map.get("half_life").value
         rsi_buffer_size = c_map.get("rsi_buffer_size").value
+        max_spread = c_map.get("maximum_spread").value / Decimal('100')
+        is_debug = c_map.get("is_debug").value
         debug_csv_path = os.path.join(data_path(),
                                       HummingbotApplication.main_application().strategy_file_name.rsplit('.', 1)[0] +
                                       f"_{pd.Timestamp.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv")
@@ -128,7 +131,9 @@ def start(self):
             debug_csv_path=debug_csv_path,
             lt_volatility_buffer_size=lt_volatility_buffer_size,
             half_life=half_life,
-            rsi_buffer_size=rsi_buffer_size
+            rsi_buffer_size=rsi_buffer_size,
+            max_spread=max_spread,
+            is_debug=is_debug,
         )
     except Exception as e:
         self._notify(str(e))

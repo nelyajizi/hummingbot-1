@@ -69,6 +69,8 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         object _hurst
         double _last_ema
         double _last_ema_lt
+        bint _is_debug
+        double _max_spread
 
 
     cdef object c_get_mid_price(self)

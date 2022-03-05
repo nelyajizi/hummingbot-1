@@ -363,11 +363,11 @@ pure_market_making_config_map = {
                   validator=lambda v: validate_decimal(v, 1, 10000),
                   default=200),
     "lt_volatility_buffer_size":
-            ConfigVar(key="lt_volatility_buffer_size",
-                      prompt="Enter amount of ticks that will be stored to calculate long term  volatility >>> ",
-                      type_str="int",
-                      validator=lambda v: validate_decimal(v, 1, 10000),
-                      default=500),
+        ConfigVar(key="lt_volatility_buffer_size",
+                  prompt="Enter amount of ticks that will be stored to calculate long term  volatility >>> ",
+                  type_str="int",
+                  validator=lambda v: validate_decimal(v, 1, 10000),
+                  default=500),
     "half_life":
         ConfigVar(key="half_life",
                   prompt="Enter the initial half life >>> ",
@@ -379,6 +379,19 @@ pure_market_making_config_map = {
                   prompt="Enter the initial half life >>> ",
                   type_str="int",
                   validator=lambda v: validate_decimal(v, 1, 10000),
-                  default=20),
+                  default=200),
+    "maximum_spread":
+        ConfigVar(key="maximum_spread",
+                  prompt="At what maximum spread should the bot adjust by volatility ? (Enter 1 for 1%) >>> ",
+                  required_if=lambda: False,
+                  type_str="decimal",
+                  default=Decimal(100),
+                  validator=lambda v: validate_decimal(v, Decimal(0), Decimal(100), True)),
+    "is_debug":
+        ConfigVar(key="is_debug",
+                  prompt="Do you want to log data ? (Yes/No) >>> ",
+                  type_str="bool",
+                  default=False,
+                  validator=validate_bool),
 
 }

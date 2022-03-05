@@ -112,7 +112,9 @@ cdef class PureMarketMakingStrategy(StrategyBase):
                     lt_volatility_buffer_size: int = 500,
                     rsi_buffer_size: int = 20,
                     debug_csv_path: str = '',
-                    half_life: int =  24
+                    half_life: int =  24,
+                    max_spread = Decimal(0.05),
+                    is_debug = False
                     ):
         if price_ceiling != s_decimal_neg_one and price_ceiling < price_floor:
             raise ValueError("Parameter price_ceiling cannot be lower than price_floor.")
@@ -184,6 +186,8 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         self._last_rsi = -1
         self._last_ema = -1
         self._last_ema_lt = -1
+        self._is_debug = is_debug
+        self._max_spread = max_spread
         self.c_add_markets([market_info.market])
 
     def all_markets_ready(self):
@@ -830,8 +834,8 @@ cdef class PureMarketMakingStrategy(StrategyBase):
 
                     if not self._take_if_crossed:
                         self.c_filter_out_takers(proposal)
-
-                self.log_data()
+                if self._is_debug:
+                    self.log_data()
 
                 self._hanging_orders_tracker.process_tick()
 
@@ -842,7 +846,7 @@ cdef class PureMarketMakingStrategy(StrategyBase):
                     self.c_execute_orders_proposal(proposal)
             else:
                 self.logger().info(f"Calculating volatility... ")
-                self.notify_hb_app_with_timestamp(f'algorithm is NOT  ready')
+                # self.notify_hb_app_with_timestamp(f'algorithm is NOT  ready')
 
         finally:
             self._last_timestamp = timestamp
@@ -874,10 +878,6 @@ cdef class PureMarketMakingStrategy(StrategyBase):
                                        'volume_best_bid', 'rsi', 'last_applied_trade',
                                        'last_trade_price_rest_updated', 'hurst')])
             df_header.to_csv(self._debug_csv_path, mode='a', header=False, index=False, sep=';')
-
-        # corr = Decimal("9")
-        # if len(auto_correl) != 0:
-        #     corr = auto_correl[0]
 
         df = pd.DataFrame([[date, price, ema, avg_bid, avg_ask, best_ask, best_bid,
                             bb_mean, bb_up, bb_down, ema_lt, last_trade_price,
@@ -1000,7 +1000,7 @@ cdef class PureMarketMakingStrategy(StrategyBase):
             self._last_ema_lt = self.ema_lt.current_value
             return False, False
 
-        depth = 5
+        depth = 2
         order_book = self._market_info.order_book
         last_trade_price = order_book.last_trade_price
         last_applied_trade = order_book.last_applied_trade
@@ -1028,14 +1028,14 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         bb_mean, bb_up, bb_down = self.bb.current_value
 
         # buy_bb_sig = (price < bb_down) and (rsi < 30)
-        buy_imb_sig = Imbalance > 0.75
-        buy_ema_sig = (ema > lt_ema) and (self._last_ema < self._last_ema_lt)
+        buy_imb_sig = Imbalance > 0.6
+        buy_ema_sig = (ema > lt_ema) # and (self._last_ema < self._last_ema_lt)
         buy_rsi_sig = (self._last_rsi < rsi) and (rsi > 30)
 
         # sell_bb_sig = (price > bb_up) and (rsi > 70)
         sell_rsi_sig = (self._last_rsi > rsi) and (rsi > 70)
-        sell_imb_sig = Imbalance < 0.75
-        sell_ema_sig = (ema < lt_ema) and (self._last_ema > self._last_ema_lt)
+        sell_imb_sig = Imbalance < 0.4
+        sell_ema_sig = (ema < lt_ema) # and (self._last_ema > self._last_ema_lt)
         sell_vol_sig = volatility > long_term_volatility
 
         entryZscore = -1.5
@@ -1054,47 +1054,59 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         bb_vol = vol_model
         if bb_up != bb_mean:
             bb_vol = (bb_up - bb_mean) / 2
-        # Zscore = (price - mean) / vol_model
-        Zscore = (price - bb_mean) / bb_vol
+            Zscore = (price - bb_mean) / bb_vol
+        else:
+            Zscore = (price - mean) / vol_model
+
         sell_bb_sig = Zscore >= exitZscore
         buy_bb_sig = Zscore < entryZscore
 
+        is_uptrending = (price > self._last_price) and (ema > lt_ema)
+
         # self.notify_hb_app_with_timestamp(f"mean:{mean}  vol:{vol_model}")
         # self.notify_hb_app_with_timestamp(f"Zscore:{Zscore}")
-        is_buy = (buy_ema_sig or buy_bb_sig) and buy_rsi_sig
-        is_sell = (sell_ema_sig or sell_bb_sig)
-        # is_buy = buy_bb_sig or buy_imb_sig or buy_ema_sig
-        # is_sell = sell_bb_sig or sell_imb_sig or sell_ema_sig
-        # is_buy = buy_bb_sig or buy_ema_sig
-        # is_sell = sell_bb_sig or sell_ema_sig
-        stamp = time.time()
-        a, b = self._debug_csv_path.split('.')
-        signal_name = a + '_signals.' + b
-        if not os.path.exists(signal_name):
-            df_header = pd.DataFrame([('time','price', 'buy_bb_sig',
-                                       'buy_imb_sig', 'buy_ema_sig',
-                                       'buy_rsi_sig', 'sell_bb_sig',
-                                       'sell_imb_sig', 'sell_vol_sig',
-                                       'sell_ema_sig', 'sell_rsi_sig',
-                                       'total_Imbalance', 'Imbalance',
-                                       'mean', 'vol_model', 'Zscore')])
-            df_header.to_csv(signal_name, mode='a', header=False, index=False, sep=';')
+        ema_sig = 0
+        if buy_ema_sig:
+            ema_sig = 1
+        bb_sig = 0
+        if buy_bb_sig and buy_rsi_sig:
+            bb_sig = 1
+        imb_sig = 0
+        if buy_imb_sig:
+            imb_sig = 1
+        signal = imb_sig + bb_sig + ema_sig
+        is_buy = float(signal) > 1.5
+        is_sell = float(signal) < 1.5
 
-        df = pd.DataFrame([[stamp, price, buy_bb_sig, buy_imb_sig,
-                            buy_ema_sig, buy_rsi_sig,
-                            sell_bb_sig, sell_imb_sig, sell_vol_sig,
-                            sell_ema_sig, sell_rsi_sig,
-                            total_Imbalance, Imbalance,
-                            mean, vol_model, Zscore]])
-        df.to_csv(signal_name, mode='a', header=False, index=False, sep=';')
+        if self._is_debug:
+            stamp = time.time()
+            a, b = self._debug_csv_path.split('.')
+            signal_name = a + '_signals.' + b
+            if not os.path.exists(signal_name):
+                df_header = pd.DataFrame([('time','price', 'buy_bb_sig',
+                                           'buy_imb_sig', 'buy_ema_sig',
+                                           'buy_rsi_sig', 'sell_bb_sig',
+                                           'sell_imb_sig', 'sell_vol_sig',
+                                           'sell_ema_sig', 'sell_rsi_sig',
+                                           'total_Imbalance', 'Imbalance',
+                                           'mean', 'vol_model', 'Zscore')])
+                df_header.to_csv(signal_name, mode='a', header=False, index=False, sep=';')
+
+            df = pd.DataFrame([[stamp, price, buy_bb_sig, buy_imb_sig,
+                                buy_ema_sig, buy_rsi_sig,
+                                sell_bb_sig, sell_imb_sig, sell_vol_sig,
+                                sell_ema_sig, sell_rsi_sig,
+                                total_Imbalance, Imbalance,
+                                mean, vol_model, Zscore]])
+            df.to_csv(signal_name, mode='a', header=False, index=False, sep=';')
 
         self._last_price = price
         self._last_rsi = rsi
         self._last_ema_lt = lt_ema
         self._last_ema = ema
-        if is_buy or is_sell:
+        if (is_buy or is_sell) and self._is_debug:
             self.notify_hb_app_with_timestamp(f"is_buy: {is_buy}, is_sell: {is_sell}")
-        return buy_bb_sig, sell_bb_sig
+        return is_buy, is_sell
 
 
     cdef object c_create_base_proposal(self):
@@ -1108,21 +1120,23 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         vol = self.get_volatility()
         long_tem_vol = self.get_long_term_volatility()
         vol_spread = max(vol - long_tem_vol,s_decimal_zero)
-        # avg_prices:
         avg_ask, avg_bid, lixi, best_ask, best_bid, volume_best_ask, volume_best_bid = self.compute_avg_lob_prices()
-        buy_reference_price = min(buy_reference_price, best_bid)
-        is_profitable = False
+
+        buy_reference_price = avg_bid
+        sell_reference_price = avg_ask
         if not self._last_own_trade_price.is_nan():
-            # sell_reference_price = max(self._last_own_trade_price, avg_ask)
-            # we want to sell as soon as the profitability is realized, i.e wtr to the mid
-            profitability = (sell_reference_price / self._last_own_trade_price) - 1
-            is_profitable = profitability > Decimal("0.01")
-        else:
-            sell_reference_price = avg_ask
+            buy_reference_price = min(avg_bid, self._last_own_trade_price)
+            sell_reference_price = max(avg_ask, self._last_own_trade_price)
 
         is_buy, is_sell = self.c_buy_sell_signal()
-        is_sell = is_sell and is_profitable
-        # self.notify_hb_app_with_timestamp(f"c_create_base_proposal")
+        is_uptrend = self.ema.current_value > self.ema_lt.current_value
+        if is_uptrend:
+            ask_vol_spread = max(vol_spread, self._max_spread)
+            bid_vol_spread = 0
+        else:
+            bid_vol_spread = max(vol_spread, self._max_spread)
+            ask_vol_spread = 0
+
         if self._inventory_cost_price_delegate is not None:
             inventory_cost_price = self._inventory_cost_price_delegate.get_price()
             if inventory_cost_price is not None:
@@ -1155,9 +1169,9 @@ cdef class PureMarketMakingStrategy(StrategyBase):
                             sells.append(PriceSize(price, size))
         else:
             if not buy_reference_price.is_nan() and is_buy:
-                self.notify_hb_app_with_timestamp(f"buy")
+                self.logger().info(f"buy proposal")
                 for level in range(0, self._buy_levels):
-                    order_bid_spread = s_decimal_zero   # Decimal(vol_spread + self._bid_spread)
+                    order_bid_spread = Decimal(bid_vol_spread) + Decimal(self._bid_spread)
                     price = buy_reference_price * (Decimal("1") - order_bid_spread - (level * self._order_level_spread))
                     price = market.c_quantize_order_price(self.trading_pair, price)
                     size = self._order_amount + (self._order_level_amount * level)
@@ -1165,9 +1179,9 @@ cdef class PureMarketMakingStrategy(StrategyBase):
                     if size > 0:
                         buys.append(PriceSize(price, size))
             if not sell_reference_price.is_nan() and is_sell:
-                self.notify_hb_app_with_timestamp(f"sell")
+                self.logger().info(f"sell proposal")
                 for level in range(0, self._sell_levels):
-                    order_ask_spread = s_decimal_zero   # Decimal(vol_spread + self._ask_spread)
+                    order_ask_spread = Decimal(ask_vol_spread) + Decimal(self._ask_spread)
                     price = sell_reference_price * (Decimal("1") + order_ask_spread + (level * self._order_level_spread))
                     price = market.c_quantize_order_price(self.trading_pair, price)
                     size = self._order_amount + (self._order_level_amount * level)
