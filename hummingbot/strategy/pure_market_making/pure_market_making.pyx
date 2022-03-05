@@ -1131,10 +1131,10 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         is_buy, is_sell = self.c_buy_sell_signal()
         is_uptrend = self.ema.current_value > self.ema_lt.current_value
         if is_uptrend:
-            ask_vol_spread = max(vol_spread, self._max_spread)
+            ask_vol_spread = min(vol_spread, self._max_spread)
             bid_vol_spread = 0
         else:
-            bid_vol_spread = max(vol_spread, self._max_spread)
+            bid_vol_spread = min(vol_spread, self._max_spread)
             ask_vol_spread = 0
 
         if self._inventory_cost_price_delegate is not None:
