@@ -71,6 +71,7 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         double _last_ema_lt
         bint _is_debug
         double _max_spread
+        int _lob_depth
 
 
     cdef object c_get_mid_price(self)

@@ -367,7 +367,7 @@ pure_market_making_config_map = {
                   prompt="Enter amount of ticks that will be stored to calculate long term  volatility >>> ",
                   type_str="int",
                   validator=lambda v: validate_decimal(v, 1, 10000),
-                  default=500),
+                  default=300),
     "half_life":
         ConfigVar(key="half_life",
                   prompt="Enter the initial half life >>> ",
@@ -393,5 +393,11 @@ pure_market_making_config_map = {
                   type_str="bool",
                   default=False,
                   validator=validate_bool),
+    "lob_depth":
+        ConfigVar(key="lob_depth",
+                  prompt="How many lob depth to consider? >>> ",
+                  type_str="int",
+                  validator=lambda v: validate_int(v, min_value=-1, inclusive=False),
+                  default=5),
 
 }

@@ -109,12 +109,13 @@ cdef class PureMarketMakingStrategy(StrategyBase):
                     order_override: Dict[str, List[str]] = {},
                     should_wait_order_cancel_confirmation = True,
                     volatility_buffer_size: int = 200,
-                    lt_volatility_buffer_size: int = 500,
-                    rsi_buffer_size: int = 20,
+                    lt_volatility_buffer_size: int = 300,
+                    rsi_buffer_size: int = 200,
                     debug_csv_path: str = '',
-                    half_life: int =  24,
+                    half_life: int =  100,
                     max_spread = Decimal(0.05),
-                    is_debug = False
+                    is_debug = False,
+                    lob_depth=5
                     ):
         if price_ceiling != s_decimal_neg_one and price_ceiling < price_floor:
             raise ValueError("Parameter price_ceiling cannot be lower than price_floor.")
@@ -178,6 +179,7 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         self._bb = BollingerBandsIndicator(sampling_length=volatility_buffer_size)
         self._hurst = HurstIndicator(sampling_length=lt_volatility_buffer_size)
         self._debug_csv_path = debug_csv_path
+        self._lob_depth = lob_depth
         try:
             os.unlink(self._debug_csv_path)
         except FileNotFoundError:
@@ -909,11 +911,11 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         self._ouprocess.add_sample(price)
         mean_rev, mean_rev_speed, realized_vol = self.ouprocess.current_value
         half_life = np.nan
-        if mean_rev_speed != 0:
+        if mean_rev_speed != 0 and mean_rev_speed != np.inf:
             half_life = np.log(2) / mean_rev_speed
-        self._ema.update_half_life(half_life)
+            self._ema.update_half_life(half_life)
+            self.ema_lt.update_half_life(2 * half_life)
         self._ema.add_sample(price)
-        self.ema_lt.update_half_life(2 * half_life)
         self.ema_lt.add_sample(price)
         # self._auto_correl.add_sample(price)
         self._avg_vol.add_sample(price)
@@ -953,11 +955,11 @@ cdef class PureMarketMakingStrategy(StrategyBase):
     def compute_avg_lob_prices(self)-> Tuple[Decimal, Decimal, Decimal, Decimal,
                                              Decimal, Decimal, Decimal]:
         order_book = self._market_info.order_book
-        depth = 20
+        # depth = 10
 
-        bids = order_book.snapshot[0][['price', 'amount']].head(depth)
+        bids = order_book.snapshot[0][['price', 'amount']].head(self._lob_depth)
         bids.rename(columns={'price': 'bid_price', 'amount': 'bid_volume'}, inplace=True)
-        asks = order_book.snapshot[1][['price', 'amount']].head(depth)
+        asks = order_book.snapshot[1][['price', 'amount']].head(self._lob_depth)
         asks.rename(columns={'price': 'ask_price', 'amount': 'ask_volume'}, inplace=True)
         joined_df = pd.concat([bids, asks], axis=1)
 
@@ -1124,9 +1126,9 @@ cdef class PureMarketMakingStrategy(StrategyBase):
 
         buy_reference_price = avg_bid
         sell_reference_price = avg_ask
-        if not self._last_own_trade_price.is_nan():
-            buy_reference_price = min(avg_bid, self._last_own_trade_price)
-            sell_reference_price = max(avg_ask, self._last_own_trade_price)
+        # if not self._last_own_trade_price.is_nan():
+        #     buy_reference_price = min(avg_bid, self._last_own_trade_price)
+        #     sell_reference_price = max(avg_ask, self._last_own_trade_price)
 
         is_buy, is_sell = self.c_buy_sell_signal()
         is_uptrend = self.ema.current_value > self.ema_lt.current_value

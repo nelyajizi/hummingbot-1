@@ -1,4 +1,3 @@
-import time
 from datetime import datetime
 
 import numpy as np
@@ -39,5 +38,5 @@ class EMAIndicator(BaseTrailingIndicator):
         return self._processing_buffer.get_last_value()
 
     def update_half_life(self, factor):
-        if not np.isnan(factor):
+        if not np.isnan(factor) and factor != 0:
             self.half_life = factor

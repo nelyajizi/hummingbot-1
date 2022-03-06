@@ -141,5 +141,7 @@ maximum_spread: null
 
 is_debug: null
 
+lob_depth: null
+
 # For more detailed information, see:
 # https://docs.hummingbot.io/strategies/pure-market-making/#configuration-parameters
