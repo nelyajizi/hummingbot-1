@@ -1091,7 +1091,8 @@ cdef class PureMarketMakingStrategy(StrategyBase):
                                            'sell_imb_sig', 'sell_vol_sig',
                                            'sell_ema_sig', 'sell_rsi_sig',
                                            'total_Imbalance', 'Imbalance',
-                                           'mean', 'vol_model', 'Zscore')])
+                                           'mean', 'vol_model', 'Zscore',
+                                           'signal', 'is_buy', 'is_sell')])
                 df_header.to_csv(signal_name, mode='a', header=False, index=False, sep=';')
 
             df = pd.DataFrame([[stamp, price, buy_bb_sig, buy_imb_sig,
@@ -1099,7 +1100,8 @@ cdef class PureMarketMakingStrategy(StrategyBase):
                                 sell_bb_sig, sell_imb_sig, sell_vol_sig,
                                 sell_ema_sig, sell_rsi_sig,
                                 total_Imbalance, Imbalance,
-                                mean, vol_model, Zscore]])
+                                mean, vol_model, Zscore,
+                                signal, is_buy, is_sell]])
             df.to_csv(signal_name, mode='a', header=False, index=False, sep=';')
 
         self._last_price = price
