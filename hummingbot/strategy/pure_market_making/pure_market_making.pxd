@@ -72,7 +72,8 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         bint _is_debug
         double _max_spread
         int _lob_depth
-
+        int sell_signal
+        int buy_signal
 
     cdef object c_get_mid_price(self)
     cdef object c_create_base_proposal(self)

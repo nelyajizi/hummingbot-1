@@ -14,11 +14,16 @@ class HurstIndicator(BaseTrailingIndicator):
         data = self._sampling_buffer.get_as_numpy_array()
         if data.size < self._sampling_length:
             return np.nan
-        hurst, c, data = self.compute_hurst(data, simplified=False)
-        if hurst != 0:
+        try:
+            hurst, c, data = self.compute_hurst(data, simplified=False)
+            if hurst != 0:
+                return hurst
+            hurst, c, data = self.compute_hurst(data, simplified=True)
             return hurst
-        hurst, c, data = self.compute_hurst(data, simplified=True)
-        return hurst
+
+        except ValueError:
+            return self._processing_buffer.get_last_value()
+
     #     lags = range(2, 100)
     #     # Calculate the array of the variances of the lagged differences
     #     tau = [np.sqrt(np.std(np.subtract(data[lag:], data[:-lag]))) for lag in lags]

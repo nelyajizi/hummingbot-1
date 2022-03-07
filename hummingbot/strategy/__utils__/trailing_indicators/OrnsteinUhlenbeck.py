@@ -84,7 +84,7 @@ class OUModelIndicator(BaseTrailingIndicator):
         mid = self._sampling_buffer.get_last_value()
         mean = mid * np.exp(-mean_rev_speed * length)
         mean += mean_rev * (1 - np.exp(-mean_rev_speed * length))
-        variance = realized_vol * realized_vol * (1 - np.exp(-2 * mean_rev_speed * length)) / 2 * mean_rev_speed
+        variance = realized_vol * realized_vol * (1 - np.exp(-2 * mean_rev_speed * length)) / (2 * mean_rev_speed)
         mean += 0.5 * variance
         vol_model = np.sqrt(variance)
         return mean, vol_model
