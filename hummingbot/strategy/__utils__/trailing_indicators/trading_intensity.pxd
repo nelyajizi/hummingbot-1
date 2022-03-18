@@ -12,9 +12,21 @@ cdef class TradingIntensityIndicator():
         int _samples_length
         double _last_inserted_trade_time
         double _last_inserted_trade_price
+        double _last_inserted_trade_amount
+        object _last_inserted_trade_type
         double _last_price
         double _last_price_time
         object _last_price_type
+        double _last_price_amount
+        double _average_sold_qty
+        double _average_bought_qty
+        double _nb_sells
+        double _nb_buys
+        double lambda_2
+        object lambda_spread
+        list spread_levels
+        double _old_kappa
+        double _old_alpha
 
     cdef c_simulate_execution(self, bids_df, asks_df)
     cdef c_estimate_intensity(self)

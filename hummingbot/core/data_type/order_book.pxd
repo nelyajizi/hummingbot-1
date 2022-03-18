@@ -17,6 +17,7 @@ cdef class OrderBook(PubSub):
     cdef double _best_bid
     cdef double _best_ask
     cdef double _last_trade_price
+    cdef double _last_trade_amount
     cdef double _last_trade_time
     cdef double _last_applied_trade
     cdef double _last_trade_price_rest_updated

@@ -1166,13 +1166,18 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         buy_reference_price = avg_bid
         sell_reference_price = avg_ask
 
+        mean_reversion = self.hurst.current_value < 0.5
         is_uptrend = self.ema.current_value > self.ema_lt.current_value
-        if is_uptrend:
-            ask_vol_spread = vol_spread
-            bid_vol_spread = s_decimal_zero
-        else:
-            bid_vol_spread = vol_spread
-            ask_vol_spread = s_decimal_zero
+        ask_vol_spread = s_decimal_zero
+        bid_vol_spread = s_decimal_zero
+        if not mean_reversion:
+            if is_uptrend:
+                ask_vol_spread = vol_spread
+                bid_vol_spread = s_decimal_zero
+            else:
+                bid_vol_spread = vol_spread
+                ask_vol_spread = s_decimal_zero
+
         # is_buy, is_sell = self.c_buy_sell_signal()
         # if is_buy and not is_sell:
         #     buy_signal_spread = s_decimal_zero
@@ -1189,10 +1194,8 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         bid_spread = bid_ask + skew + self.bid_spread + bid_vol_spread
         ask_spread = bid_ask + skew + self.ask_spread + ask_vol_spread
 
-        price_quantum = self.market_info.market.c_get_order_price_quantum(
-            self.trading_pair,
-            best_bid)
-        self.logger().info(f"price quantum: {price_quantum}")
+        # price_quantum = market.c_get_order_price_quantum(self.trading_pair, best_bid)
+        # self.logger().info(f"price quantum: {price_quantum}")
 
         if self._inventory_cost_price_delegate is not None:
             inventory_cost_price = self._inventory_cost_price_delegate.get_price()

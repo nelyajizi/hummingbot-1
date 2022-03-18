@@ -54,6 +54,7 @@ cdef class OrderBook(PubSub):
         self._best_bid = self._best_ask = float("NaN")
         self._last_trade_price = float("NaN")
         self._last_trade_time = float("NaN")
+        self._last_trade_amount = float("NaN")
         self._last_trade_type = 0
         self._last_applied_trade = -1000.0
         self._last_trade_price_rest_updated = -1000
@@ -143,8 +144,17 @@ cdef class OrderBook(PubSub):
         self._last_trade_price = trade_event.price
         self._last_trade_time = trade_event.timestamp
         self._last_trade_type = trade_event.type
+        self._last_trade_amount = trade_event.amount
         self._last_applied_trade = time.perf_counter()
         self.c_trigger_event(self.ORDER_BOOK_TRADE_EVENT_TAG, trade_event)
+
+    @property
+    def last_trade_amount(self) -> float:
+        return self._last_trade_amount
+
+    @last_trade_amount.setter
+    def last_trade_amount(self, value: float):
+        self._last_trade_amount = value
 
     @property
     def last_trade_time(self) -> float:

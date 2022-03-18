@@ -666,15 +666,23 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         last_trade_price = order_book.last_trade_price
         last_trade_time = order_book.last_trade_time
         last_trade_type = order_book.last_trade_type
-        trade_tuple = last_trade_time, last_trade_price, last_trade_type
-        self.logger().info(f"last trade price:{last_trade_price}  "
-                           f"last trade time: {last_trade_time}  "
-                           f"last trade type: {last_trade_type}  "
-                           f"mid price: {price}")
+        last_trade_amount = order_book.last_trade_amount
+
+        trade_tuple = last_trade_time, last_trade_price, last_trade_type, last_trade_amount
+        # self.logger().info(f"last trade price:{last_trade_price}  "
+        #                    f"last trade amount: {last_trade_amount}  "
+        #                    f"last trade type: {last_trade_type}  "
+        #                    f"mid price: {price}")
 
         snapshot = self.get_order_book_snapshot()
+
+        # quantum = market.c_get_order_size_quantum(self.trading_pair, price)
+        # self.logger().info(f"quantum: {quantum}")
+
         self._avg_vol.add_sample(price)
         self._trading_intensity.add_sample(snapshot, trade_tuple)
+        # self.logger().info(f"average_sold_qty:{self._trading_intensity.average_sold_qty}"
+        #                    f"average_bought_qty: {self._trading_intensity.average_bought_qty}")
         # Calculate adjustment factor to have 0.01% of inventory resolution
         base_balance = market.get_balance(base_asset)
         quote_balance = market.get_balance(quote_asset)
@@ -1380,14 +1388,16 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                                        'inventory_target_pct',
                                        'last_trade_price',
                                        'last_trade_time',
-                                       'last_trade_type')])
+                                       'last_trade_type',
+                                       'old_alpha',
+                                       'old_kappa')])
             df_header.to_csv(self._debug_csv_path, mode='a', header=False, index=False)
 
         if self._execution_state.time_left is not None and self._execution_state.closing_time is not None:
             time_left_fraction = self._execution_state.time_left / self._execution_state.closing_time
         else:
             time_left_fraction = None
-
+        old_alpha, old_kappa = self._trading_intensity.get_old_param()
         df = pd.DataFrame([(mid_price,
                             best_bid,
                             best_ask,
@@ -1410,5 +1420,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                             self.inventory_target_base_pct,
                             last_trade_price,
                             last_trade_time,
-                            last_trade_type)])
+                            last_trade_type,
+                            old_alpha,
+                            old_kappa)])
         df.to_csv(self._debug_csv_path, mode='a', header=False, index=False)
