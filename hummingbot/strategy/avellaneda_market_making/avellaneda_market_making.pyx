@@ -473,7 +473,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
             age = "n/a"
             # // indicates order is a paper order so 'n/a'. For real orders, calculate age.
             if "//" not in order.client_order_id:
-                age = pd.Timestamp(int(time.time()) - int(order.client_order_id[-16:]) / 1e6,
+                age = pd.Timestamp(int(time.time() - (order.creation_timestamp / 1e6)),
                                    unit='s').strftime('%H:%M:%S')
             amount_orig = self._order_amount
             if is_hanging_order:
@@ -662,9 +662,19 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         self._last_sampling_timestamp = timestamp
 
         price = self.get_price()
+        order_book = self._market_info.order_book
+        last_trade_price = order_book.last_trade_price
+        last_trade_time = order_book.last_trade_time
+        last_trade_type = order_book.last_trade_type
+        trade_tuple = last_trade_time, last_trade_price, last_trade_type
+        self.logger().info(f"last trade price:{last_trade_price}  "
+                           f"last trade time: {last_trade_time}  "
+                           f"last trade type: {last_trade_type}  "
+                           f"mid price: {price}")
+
         snapshot = self.get_order_book_snapshot()
         self._avg_vol.add_sample(price)
-        self._trading_intensity.add_sample(snapshot)
+        self._trading_intensity.add_sample(snapshot, trade_tuple)
         # Calculate adjustment factor to have 0.01% of inventory resolution
         base_balance = market.get_balance(base_asset)
         quote_balance = market.get_balance(quote_asset)
@@ -722,7 +732,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
             return
 
         q_target = Decimal(str(self.c_calculate_target_inventory()))
-        q = (market.get_balance(self.base_asset) - q_target) / (inventory)
+        q = (market.get_balance(self.base_asset) - q_target)
         # Volatility has to be in absolute values (prices) because in calculation of reservation price it's not multiplied by the current price, therefore
         # it can't be a percentage. The result of the multiplication has to be an absolute price value because it's being subtracted from the current price
         vol = self.get_volatility()
@@ -744,9 +754,9 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                 # a fixed time left
                 time_left_fraction = 1
 
-            self._reservation_price = price - (q * self._gamma * mid_price_variance * time_left_fraction)
+            self._reservation_price = price - (q * self._gamma * vol * time_left_fraction)
 
-            self._optimal_spread = self._gamma * mid_price_variance * time_left_fraction
+            self._optimal_spread = self._gamma * vol * time_left_fraction
             self._optimal_spread += 2 * Decimal(1 + self._gamma / self._kappa).ln() / self._gamma
 
             min_spread = price / 100 * Decimal(str(self._min_spread))
@@ -1343,6 +1353,9 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
 
         vol = self.get_volatility()
         mid_price_variance = vol ** 2
+        last_trade_price = self._market_info.order_book.last_trade_price
+        last_trade_time = self._market_info.order_book.last_trade_time
+        last_trade_type = self._market_info.order_book.last_trade_type
 
         if not os.path.exists(self._debug_csv_path):
             df_header = pd.DataFrame([('mid_price',
@@ -1364,7 +1377,10 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                                        'eta',
                                        'volatility',
                                        'mid_price_variance',
-                                       'inventory_target_pct')])
+                                       'inventory_target_pct',
+                                       'last_trade_price',
+                                       'last_trade_time',
+                                       'last_trade_type')])
             df_header.to_csv(self._debug_csv_path, mode='a', header=False, index=False)
 
         if self._execution_state.time_left is not None and self._execution_state.closing_time is not None:
@@ -1391,5 +1407,8 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                             self._eta,
                             vol,
                             mid_price_variance,
-                            self.inventory_target_base_pct)])
+                            self.inventory_target_base_pct,
+                            last_trade_price,
+                            last_trade_time,
+                            last_trade_type)])
         df.to_csv(self._debug_csv_path, mode='a', header=False, index=False)

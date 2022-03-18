@@ -104,7 +104,7 @@ def start(self):
             volatility_buffer_size=volatility_buffer_size,
             trading_intensity_buffer_size=trading_intensity_buffer_size,
             should_wait_order_cancel_confirmation=should_wait_order_cancel_confirmation,
-            is_debug=False
+            is_debug=True
         )
     except Exception as e:
         self._notify(str(e))

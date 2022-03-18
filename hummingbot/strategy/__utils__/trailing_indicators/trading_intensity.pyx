@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal
 from math import floor, ceil
 import numpy as np
@@ -8,9 +9,17 @@ from typing import (
     Tuple,
 )
 import warnings
+intensity_logger = None
 
+from hummingbot.core.event.events import TradeType
 
 cdef class TradingIntensityIndicator():
+    @classmethod
+    def logger(cls):
+        global intensity_logger
+        if intensity_logger is None:
+            intensity_logger = logging.getLogger(__name__)
+        return intensity_logger
 
     def __init__(self, sampling_length: int = 30):
         self._alpha = 0
@@ -20,6 +29,11 @@ cdef class TradingIntensityIndicator():
         self._asks_df = None
         self._sampling_length = sampling_length
         self._samples_length = 0
+        self._last_inserted_trade_time = 0
+        self._last_inserted_trade_price = 0
+        self._last_price = 0
+        self._last_price_time = 0
+        self._last_price_type = 0
 
         warnings.simplefilter("ignore", OptimizeWarning)
 
@@ -53,6 +67,47 @@ cdef class TradingIntensityIndicator():
         price_prev = (bid_prev + ask_prev) / 2
 
         trades = []
+        real_trades = []
+        if self._last_price_type == TradeType.BUY:
+            if self._last_price <= bid:
+                # limit order, do nothing
+                pass
+            elif (self._last_price > bid) and (self._last_price < ask):
+                # aggressive limit order, do nothing
+                pass
+            elif self._last_price >= ask:
+                # market order
+                amount = asks_df["amount"].iloc[0]
+                for ind in asks_df.index:
+                    if self._last_price < asks_df['price'][ind]:
+                        price_level = abs(asks_df['price'][ind] - price)
+                        real_trades += [{'price_level': price_level, 'amount': amount}]
+                        self.logger().info(f"price_level:{price_level}  "
+                                           f"amount: {amount}")
+                        self._last_inserted_trade_time = self._last_price_time
+                        self._last_inserted_trade_price = self._last_price
+                        break
+                    amount += asks_df['amount'][ind]
+        elif self._last_price_type == TradeType.SELL:
+            if self._last_price >= ask:
+                # limit order, do nothing
+                pass
+            elif (self._last_price > bid) and (self._last_price < ask):
+                # aggressive limit order, do nothing
+                pass
+            elif self._last_price <= bid:
+                # market order
+                amount = bids_df["amount"].iloc[0]
+                for ind in bids_df.index:
+                    if self._last_price > bids_df['price'][ind]:
+                        price_level = abs(bids_df['price'][ind] - price)
+                        real_trades += [{'price_level': price_level, 'amount': amount}]
+                        self._last_inserted_trade_time = self._last_price_time
+                        self._last_inserted_trade_price = self._last_price
+                        self.logger().info(f"price_level:{price_level}  "
+                                           f"amount: {amount}  ")
+                        break
+                    amount += asks_df['amount'][ind]
 
         # Higher bids were filled - someone matched them - a determined seller
         # Equal bids - if amount lower - partially filled
@@ -81,7 +136,10 @@ cdef class TradingIntensityIndicator():
                 trades += [{'price_level': price_level, 'amount': amount}]
 
         # Add trades
-        self._trades += [trades]
+        self._trades += [real_trades]
+        # todo ney
+
+
         if len(self._trades) > _sampling_length:
             self._trades = self._trades[1:]
 
@@ -132,9 +190,13 @@ cdef class TradingIntensityIndicator():
         except (RuntimeError, ValueError) as e:
             pass
 
-    def add_sample(self, value: Tuple[pd.DataFrame, pd.DataFrame]):
+    def add_sample(self, value: Tuple[pd.DataFrame, pd.DataFrame], last_trade: Tuple[double, double, TradeType]):
         bids_df = value[0]
         asks_df = value[1]
+
+        self._last_price = last_trade[1]
+        self._last_price_time = last_trade[0]
+        self._last_price_type = last_trade[2]
 
         if bids_df.empty or asks_df.empty:
             return

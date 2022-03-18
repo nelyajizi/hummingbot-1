@@ -1110,9 +1110,10 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         #     is_sell = True
         self.buy_signal = buy_imb_sig + buy_rsi_sig + buy_bb_sig + buy_ema_sig
         self.sell_signal = sell_rsi_sig + sell_imb_sig + sell_ema_sig + sell_bb_sig
-        is_buy = float(self.buy_signal) >= 2
-        is_sell = float(self.sell_signal) >= 2
-
+        # is_buy = float(self.buy_signal) >= 2
+        # is_sell = float(self.sell_signal) >= 2
+        is_buy = float(self.buy_signal) >= float(self.sell_signal)
+        is_sell = float(self.buy_signal) <= float(self.sell_signal)
         if self._is_debug:
             stamp = time.time()
             a, b = self._debug_csv_path.split('.')
@@ -1159,21 +1160,39 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         long_tem_vol = self.get_long_term_volatility()
         vol_spread = max(vol - long_tem_vol,s_decimal_zero)
         avg_ask, avg_bid, lixi, best_ask, best_bid, volume_best_ask, volume_best_bid, imbalance = self.compute_avg_lob_prices()
-
+        bid_ask = best_ask - best_bid
+        base_balance = market.get_balance(self._market_info.base_asset)
+        target_balance = self.inventory_target_base_pct
         buy_reference_price = avg_bid
         sell_reference_price = avg_ask
-        # if not self._last_own_trade_price.is_nan():
-        #     buy_reference_price = min(avg_bid, self._last_own_trade_price)
-        #     sell_reference_price = max(avg_ask, self._last_own_trade_price)
 
-        is_buy, is_sell = self.c_buy_sell_signal()
         is_uptrend = self.ema.current_value > self.ema_lt.current_value
         if is_uptrend:
-            ask_vol_spread = min(vol_spread, self._max_spread)
-            bid_vol_spread = 0
+            ask_vol_spread = vol_spread
+            bid_vol_spread = s_decimal_zero
         else:
-            bid_vol_spread = min(vol_spread, self._max_spread)
-            ask_vol_spread = 0
+            bid_vol_spread = vol_spread
+            ask_vol_spread = s_decimal_zero
+        # is_buy, is_sell = self.c_buy_sell_signal()
+        # if is_buy and not is_sell:
+        #     buy_signal_spread = s_decimal_zero
+        #     sell_signal_spread = Decimal(self._max_spread)
+        # elif not is_buy and is_sell:
+        #     buy_signal_spread = Decimal(self._max_spread)
+        #     sell_signal_spread = s_decimal_zero
+        # else:
+        #     buy_signal_spread = Decimal(self._max_spread) / Decimal(2.0)
+        #     sell_signal_spread = Decimal(self._max_spread) / Decimal(2.0)
+
+        adj = Decimal("1")
+        skew = -(base_balance - target_balance) * vol
+        bid_spread = bid_ask + skew + self.bid_spread + bid_vol_spread
+        ask_spread = bid_ask + skew + self.ask_spread + ask_vol_spread
+
+        price_quantum = self.market_info.market.c_get_order_price_quantum(
+            self.trading_pair,
+            best_bid)
+        self.logger().info(f"price quantum: {price_quantum}")
 
         if self._inventory_cost_price_delegate is not None:
             inventory_cost_price = self._inventory_cost_price_delegate.get_price()
@@ -1206,20 +1225,22 @@ cdef class PureMarketMakingStrategy(StrategyBase):
                         if size > 0 and price > 0:
                             sells.append(PriceSize(price, size))
         else:
-            if not buy_reference_price.is_nan() and is_buy:
+            if not buy_reference_price.is_nan():
                 self.logger().info(f"buy proposal")
                 for level in range(0, self._buy_levels):
-                    order_bid_spread = Decimal(bid_vol_spread) + Decimal(self._bid_spread)
+                    # order_bid_spread = Decimal(bid_vol_spread) + Decimal(buy_signal_spread) + Decimal(self._bid_spread)
+                    order_bid_spread = bid_spread
                     price = buy_reference_price * (Decimal("1") - order_bid_spread - (level * self._order_level_spread))
                     price = market.c_quantize_order_price(self.trading_pair, price)
                     size = self._order_amount + (self._order_level_amount * level)
                     size = market.c_quantize_order_amount(self.trading_pair, size)
                     if size > 0:
                         buys.append(PriceSize(price, size))
-            if not sell_reference_price.is_nan() and is_sell:
+            if not sell_reference_price.is_nan():
                 self.logger().info(f"sell proposal")
                 for level in range(0, self._sell_levels):
                     order_ask_spread = Decimal(ask_vol_spread) + Decimal(self._ask_spread)
+                    order_ask_spread = ask_spread
                     price = sell_reference_price * (Decimal("1") + order_ask_spread + (level * self._order_level_spread))
                     price = market.c_quantize_order_price(self.trading_pair, price)
                     size = self._order_amount + (self._order_level_amount * level)
