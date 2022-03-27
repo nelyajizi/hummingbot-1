@@ -115,7 +115,8 @@ cdef class PureMarketMakingStrategy(StrategyBase):
                     half_life: int =  100,
                     max_spread = Decimal(0.05),
                     is_debug = False,
-                    lob_depth=5
+                    lob_depth=5,
+                    gamma=1.0
                     ):
         if price_ceiling != s_decimal_neg_one and price_ceiling < price_floor:
             raise ValueError("Parameter price_ceiling cannot be lower than price_floor.")
@@ -170,11 +171,11 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         self._avg_vol = InstantVolatilityIndicator(sampling_length=volatility_buffer_size)
         self._lt_avg_vol = InstantVolatilityIndicator(sampling_length=lt_volatility_buffer_size)
         self._ema = EMAIndicator(sampling_length=volatility_buffer_size)
-        self._ema_lt = EMAIndicator(sampling_length=2 * volatility_buffer_size)
+        self._ema_lt = EMAIndicator(sampling_length=lt_volatility_buffer_size)
         # self._auto_correl = AutoCorrelIndicator(order_refresh_time, sampling_length=volatility_buffer_size)
         self._last_sampling_timestamp = 0
         self._latest_parameter_calculation_vol = s_decimal_zero
-        self._ouprocess = OUModelIndicator(sampling_length=lt_volatility_buffer_size)
+        self._ouprocess = OUModelIndicator(sampling_length=volatility_buffer_size)
         self._rsi = RSIIndicator(sampling_length=volatility_buffer_size)
         self._bb = BollingerBandsIndicator(sampling_length=volatility_buffer_size)
         self._hurst = HurstIndicator(sampling_length=lt_volatility_buffer_size)
@@ -192,10 +193,19 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         self._max_spread = max_spread
         self.sell_signal = 0
         self.buy_signal = 0
+        self._gamma = gamma
         self.c_add_markets([market_info.market])
 
     def all_markets_ready(self):
         return all([market.ready for market in self._sb_markets])
+
+    @property
+    def gamma(self):
+        return self._gamma
+
+    @gamma.setter
+    def gamma(self, value: float):
+        self._gamma = value
 
     @property
     def hurst(self):
@@ -1035,20 +1045,14 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         rsi = self.rsi.current_value
         bb_mean, bb_up, bb_down = self.bb.current_value
         delta_t = int(self.order_refresh_time)
-        # mean_rev, mean_rev_speed, std_dev = self.ouprocess.current_value
-        # mean = price * np.exp(-mean_rev_speed * delta_t)
-        # mean += mean_rev * (1 - np.exp(-mean_rev_speed * delta_t))
-        # variance = std_dev * std_dev * (1 - np.exp(-2 * mean_rev_speed * delta_t)) / (2 * mean_rev_speed)
-        # mean += 0.5 * variance
-        # vol_model = np.sqrt(variance)
         mean, vol_model = self.ouprocess.get_mean_vol(delta_t)
 
         bb_vol = vol_model
         if bb_up != bb_mean:
             bb_vol = (bb_up - bb_mean) / 2
-            Zscore = (price - bb_mean) / bb_vol
+            Zscore = (Decimal(price) - bb_mean) / bb_vol
         else:
-            Zscore = (price - mean) / vol_model
+            Zscore = (Decimal(price) - mean) / vol_model
 
         sell_bb_sig = 0
         buy_bb_sig = 0
@@ -1147,6 +1151,29 @@ cdef class PureMarketMakingStrategy(StrategyBase):
             self.notify_hb_app_with_timestamp(f"is_buy: {is_buy}, is_sell: {is_sell}")
         return is_buy, is_sell
 
+    cdef object c_calculate_target_inventory(self):
+        cdef:
+            ExchangeBase market = self._market_info.market
+            str trading_pair = self._market_info.trading_pair
+            str base_asset = self._market_info.base_asset
+            str quote_asset = self._market_info.quote_asset
+            object mid_price
+            object base_value
+            object inventory_value
+            object target_inventory_value
+
+        price = self.get_price()
+        base_asset_amount = market.get_balance(base_asset)
+        quote_asset_amount = market.get_balance(quote_asset)
+        # Base asset value in quote asset prices
+        base_value = base_asset_amount * price
+        # Total inventory value in quote asset prices
+        inventory_value = base_value + quote_asset_amount
+        # Target base asset value in quote asset prices
+        target_inventory_value = inventory_value * self._inventory_target_base_pct
+        # Target base asset amount
+        target_inventory_amount = target_inventory_value / price
+        return market.c_quantize_order_amount(trading_pair, Decimal(str(target_inventory_amount)))
 
     cdef object c_create_base_proposal(self):
         cdef:
@@ -1160,11 +1187,12 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         long_tem_vol = self.get_long_term_volatility()
         vol_spread = max(vol - long_tem_vol,s_decimal_zero)
         avg_ask, avg_bid, lixi, best_ask, best_bid, volume_best_ask, volume_best_bid, imbalance = self.compute_avg_lob_prices()
-        bid_ask = best_ask - best_bid
-        base_balance = market.get_balance(self._market_info.base_asset)
-        target_balance = self.inventory_target_base_pct
-        buy_reference_price = avg_bid
-        sell_reference_price = avg_ask
+        half_bid_ask = (best_ask - best_bid) / Decimal(2)
+        half_bid_ask /= self.get_price()
+        # base_balance = market.get_balance(self._market_info.base_asset)
+        # target_balance = self.inventory_target_base_pct
+        # buy_reference_price = avg_bid
+        # sell_reference_price = avg_ask
 
         mean_reversion = self.hurst.current_value < 0.5
         is_uptrend = self.ema.current_value > self.ema_lt.current_value
@@ -1177,6 +1205,9 @@ cdef class PureMarketMakingStrategy(StrategyBase):
             else:
                 bid_vol_spread = vol_spread
                 ask_vol_spread = s_decimal_zero
+        self.logger().info(f"hurst: {self.hurst.current_value}"
+                           f"bid_vol_spread: {bid_vol_spread}"
+                           f"ask_vol_spread: {ask_vol_spread}")
 
         # is_buy, is_sell = self.c_buy_sell_signal()
         # if is_buy and not is_sell:
@@ -1189,13 +1220,23 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         #     buy_signal_spread = Decimal(self._max_spread) / Decimal(2.0)
         #     sell_signal_spread = Decimal(self._max_spread) / Decimal(2.0)
 
-        adj = Decimal("1")
-        skew = -(base_balance - target_balance) * vol
-        bid_spread = bid_ask + skew + self.bid_spread + bid_vol_spread
-        ask_spread = bid_ask + skew + self.ask_spread + ask_vol_spread
+        mean, vol = self.ouprocess.get_mean_vol(self.order_refresh_time)
+        expected_return = (Decimal(mean) - self.get_price()) / self.get_price()
+        price_quantum = market.c_get_order_price_quantum(self.trading_pair, best_bid)
+        q_target = Decimal(str(self.c_calculate_target_inventory()))
+        q = Decimal(market.get_balance(self.base_asset) - q_target)
+        skew = q * Decimal(vol) * Decimal(self._gamma)
+        # two choices: include fees in bid and ask spread or apply transaction cost
+        bid_spread = skew + self.bid_spread + expected_return + half_bid_ask
+        ask_spread = -skew + self.ask_spread + expected_return + half_bid_ask
 
-        # price_quantum = market.c_get_order_price_quantum(self.trading_pair, best_bid)
-        # self.logger().info(f"price quantum: {price_quantum}")
+        # self.notify_hb_app_with_timestamp(f"vol: {vol}  "
+        #                    f"skew: {skew}   "
+        #                    f"q={q}    "
+        #                    f"half_bid_ask: {half_bid_ask}   ")
+        #
+        # self.notify_hb_app_with_timestamp(f"bid_spread: {bid_spread}    "
+        #                    f"ask_spread: {ask_spread}")
 
         if self._inventory_cost_price_delegate is not None:
             inventory_cost_price = self._inventory_cost_price_delegate.get_price()
@@ -1232,8 +1273,7 @@ cdef class PureMarketMakingStrategy(StrategyBase):
                 self.logger().info(f"buy proposal")
                 for level in range(0, self._buy_levels):
                     # order_bid_spread = Decimal(bid_vol_spread) + Decimal(buy_signal_spread) + Decimal(self._bid_spread)
-                    order_bid_spread = bid_spread
-                    price = buy_reference_price * (Decimal("1") - order_bid_spread - (level * self._order_level_spread))
+                    price = buy_reference_price * (Decimal("1") - bid_spread - (level * self._order_level_spread))
                     price = market.c_quantize_order_price(self.trading_pair, price)
                     size = self._order_amount + (self._order_level_amount * level)
                     size = market.c_quantize_order_amount(self.trading_pair, size)
@@ -1242,9 +1282,8 @@ cdef class PureMarketMakingStrategy(StrategyBase):
             if not sell_reference_price.is_nan():
                 self.logger().info(f"sell proposal")
                 for level in range(0, self._sell_levels):
-                    order_ask_spread = Decimal(ask_vol_spread) + Decimal(self._ask_spread)
-                    order_ask_spread = ask_spread
-                    price = sell_reference_price * (Decimal("1") + order_ask_spread + (level * self._order_level_spread))
+                    # order_ask_spread = Decimal(ask_vol_spread) + Decimal(self._ask_spread)
+                    price = sell_reference_price * (Decimal("1") + ask_spread + (level * self._order_level_spread))
                     price = market.c_quantize_order_price(self.trading_pair, price)
                     size = self._order_amount + (self._order_level_amount * level)
                     size = market.c_quantize_order_amount(self.trading_pair, size)

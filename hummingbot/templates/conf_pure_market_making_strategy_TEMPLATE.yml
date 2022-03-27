@@ -143,5 +143,7 @@ is_debug: null
 
 lob_depth: null
 
+gamma: null
+
 # For more detailed information, see:
 # https://docs.hummingbot.io/strategies/pure-market-making/#configuration-parameters

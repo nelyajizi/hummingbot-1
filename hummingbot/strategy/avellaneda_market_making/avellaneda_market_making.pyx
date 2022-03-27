@@ -1105,7 +1105,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                 return
 
             q_target = Decimal(str(self.c_calculate_target_inventory()))
-            q = (market.get_balance(self.base_asset) - q_target) / (inventory)
+            q = (market.get_balance(self.base_asset) - q_target)
 
             if len(proposal.buys) > 0:
                 if q > 0:

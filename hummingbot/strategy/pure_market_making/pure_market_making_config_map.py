@@ -399,5 +399,11 @@ pure_market_making_config_map = {
                   type_str="int",
                   validator=lambda v: validate_int(v, min_value=-1, inclusive=False),
                   default=5),
+    "gamma":
+        ConfigVar(key="gamma",
+                  prompt="skew parameter value ? >>> ",
+                  type_str="decimal",
+                  default=Decimal(1),
+                  validator=lambda v: validate_decimal(v, Decimal(0), Decimal(100), True)),
 
 }

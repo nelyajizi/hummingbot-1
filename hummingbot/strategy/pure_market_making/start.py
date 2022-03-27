@@ -89,7 +89,7 @@ def start(self):
         max_spread = c_map.get("maximum_spread").value / Decimal('100')
         is_debug = c_map.get("is_debug").value
         lob_depth = c_map.get("lob_depth").value
-
+        gamma = c_map.get("gamma").value
         debug_csv_path = os.path.join(data_path(),
                                       HummingbotApplication.main_application().strategy_file_name.rsplit('.', 1)[0] +
                                       f"_{pd.Timestamp.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv")
@@ -137,6 +137,7 @@ def start(self):
             max_spread=max_spread,
             is_debug=is_debug,
             lob_depth=lob_depth,
+            gamma=gamma,
         )
     except Exception as e:
         self._notify(str(e))

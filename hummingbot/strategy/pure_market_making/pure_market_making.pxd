@@ -74,6 +74,7 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         int _lob_depth
         int sell_signal
         int buy_signal
+        double _gamma
 
     cdef object c_get_mid_price(self)
     cdef object c_create_base_proposal(self)
@@ -100,4 +101,5 @@ cdef class PureMarketMakingStrategy(StrategyBase):
     cdef bint c_is_algorithm_ready(self)
     cdef c_collect_market_variables(self, double timestamp)
     cdef object c_get_order_book_snapshot(self)
+    cdef object c_calculate_target_inventory(self)
 
