@@ -27,7 +27,7 @@ cdef class TradingIntensityIndicator():
             intensity_logger = logging.getLogger(__name__)
         return intensity_logger
 
-    def __init__(self, sampling_length: int = 30):
+    def __init__(self, order_refresh_time = 1, sampling_length: int = 30):
         self._alpha = 0
         self._kappa = 0
         self._old_kappa = 0
@@ -52,6 +52,7 @@ cdef class TradingIntensityIndicator():
         self.lambda_2 = 0
         self.lambda_spread = {}
         self.spread_levels = []
+        self._order_refresh_time = order_refresh_time
 
         warnings.simplefilter("ignore", OptimizeWarning)
 
@@ -92,9 +93,9 @@ cdef class TradingIntensityIndicator():
         ask = asks_df["price"].iloc[0]
         price = (bid + ask) / 2
 
-        # bid_prev = _bids_df["price"].iloc[0]
-        # ask_prev = _asks_df["price"].iloc[0]
-        # price_prev = (bid_prev + ask_prev) / 2
+        bid_prev = _bids_df["price"].iloc[0]
+        ask_prev = _asks_df["price"].iloc[0]
+        price_prev = (bid_prev + ask_prev) / 2
 
         # divide by tick_size ?
         # maybe we should use the last_mid_price instead, the order has probably already eaten the lob
@@ -105,10 +106,9 @@ cdef class TradingIntensityIndicator():
 
         real_trades = []
         if self._last_price_type == TradeType.BUY:
-            # todo ney: rajouter argument order_refresh_time
             self.logger().info(f"last_price_time: {self._last_price_time} ")
             self.logger().info(f"_last_inserted_trade_time: {self._last_inserted_trade_time} ")
-            self.lambda_2 += (self._last_price_time - self._last_inserted_trade_time)   # / 60
+            self.lambda_2 += (self._last_price_time - self._last_inserted_trade_time) / self._order_refresh_time
             self.logger().info(f"lambda 2: {self.lambda_2} ")
 
             self._nb_buys += 1
@@ -116,16 +116,16 @@ cdef class TradingIntensityIndicator():
                 self._average_bought_qty = self._last_price_amount
             else:
                 self._average_bought_qty = self._average_bought_qty - (1 / (self._nb_buys + 1)) * (self._average_bought_qty - self._last_price_amount)
-            self.logger().info(f"nb buy: {self._nb_buys} "
-                               f"average buy volume: {self._average_bought_qty} ")
+            # self.logger().info(f"nb buy: {self._nb_buys} "
+            #                    f"average buy volume: {self._average_bought_qty} ")
 
-            if self._last_price <= bid:
+            if self._last_price <= bid_prev:
                 # limit order, do nothing
                 return
-            elif (self._last_price > bid) and (self._last_price < ask):
+            elif (self._last_price > bid_prev) and (self._last_price < ask_prev):
                 # aggressive limit order, do nothing
                 return
-            elif self._last_price >= ask:
+            elif self._last_price >= ask_prev:
                 # market order
                 price_level = spread
                 real_trades += [{'price_level': price_level, 'amount': self._last_price_amount, 'type': 'BUY'}]
@@ -142,9 +142,9 @@ cdef class TradingIntensityIndicator():
                 self._last_inserted_trade_amount = self._last_price_amount
 
         elif self._last_price_type == TradeType.SELL:
-            self.logger().info(f"last_price_time: {self._last_price_time} ")
-            self.logger().info(f"_last_inserted_trade_time: {self._last_inserted_trade_time} ")
-            self.lambda_2 += (self._last_price_time - self._last_inserted_trade_time)   # / 60
+            # self.logger().info(f"last_price_time: {self._last_price_time} ")
+            # self.logger().info(f"_last_inserted_trade_time: {self._last_inserted_trade_time} ")
+            self.lambda_2 += (self._last_price_time - self._last_inserted_trade_time) / self._order_refresh_time
             self.logger().info(f"lambda 2: {self.lambda_2}")
             # average sell quantity:
             self._nb_sells += 1
@@ -152,16 +152,14 @@ cdef class TradingIntensityIndicator():
                 self._average_sold_qty = self._last_price_amount
             else:
                 self._average_sold_qty = self._average_sold_qty - (1 / (self._nb_sells + 1)) * (self._average_sold_qty - self._last_price_amount)
-            self.logger().info(f"nb sells: {self._nb_sells}"
-                               f"average_sell volume: {self._average_sold_qty}")
-            # spread:
-            if self._last_price >= ask:
+
+            if self._last_price >= ask_prev:
                 # limit order, do nothing
                 return
-            elif (self._last_price > bid) and (self._last_price < ask):
+            elif (self._last_price > bid_prev) and (self._last_price < ask_prev):
                 # aggressive limit order, do nothing... for now !
                 return
-            elif self._last_price <= bid:
+            elif self._last_price <= bid_prev:
                 # market order
                 price_level = spread
                 real_trades += [{'price_level': price_level, 'amount': self._last_price_amount, 'type': 'SELL'}]
@@ -175,6 +173,11 @@ cdef class TradingIntensityIndicator():
                 self._last_inserted_trade_price = self._last_price
                 self._last_inserted_trade_type = self._last_price_type
                 self._last_inserted_trade_amount = self._last_price_amount
+
+        self.logger().info(f"average buy volume: {self._average_bought_qty}"
+                           f"average_sell volume: {self._average_sold_qty}")
+        self.logger().info(f"nb buys: {self._nb_buys}"
+                           f"nb sells: {self._nb_sells}")
 
         self._trades += [real_trades]
         if len(self._trades) > _sampling_length:
@@ -190,47 +193,35 @@ cdef class TradingIntensityIndicator():
             list price_levels
 
         # Calculate lambdas / trading intensities
-        lambdas = []
+        # lambdas = []
         # lambdas_bis = []
-        trades_consolidated = {}
+        # trades_consolidated = {}
         # trades_count = {}
-        price_levels = []
-        for tick in self._trades:
-            for trade in tick:
-                if trade['price_level'] not in trades_consolidated.keys():
-                    trades_consolidated[trade['price_level']] = 0
-                    price_levels += [trade['price_level']]
+        # price_levels = []
+        # for tick in self._trades:
+        #     for trade in tick:
+        #         if trade['price_level'] not in trades_consolidated.keys():
+        #             trades_consolidated[trade['price_level']] = 0
+        #             price_levels += [trade['price_level']]
+        #
+        #         trades_consolidated[trade['price_level']] += trade['amount']
+        #         # trades_count[trade['price_level']] += 1
+        # price_levels = sorted(price_levels, reverse=True)
 
-                trades_consolidated[trade['price_level']] += trade['amount']
-                # trades_count[trade['price_level']] += 1
-        price_levels = sorted(price_levels, reverse=True)
-
-        for price_level in price_levels:
-            if len(lambdas) == 0:
-                lambdas += [trades_consolidated[price_level]]
-                # lambdas_bis += [trades_count[price_level] / self._lambda_2]
-            else:
-                lambdas += [trades_consolidated[price_level]]
-                # lambdas_bis += [trades_count[price_level] / self._lambda_2]
+        # for price_level in price_levels:
+        #     if len(lambdas) == 0:
+        #         lambdas += [trades_consolidated[price_level]]
+        #         # lambdas_bis += [trades_count[price_level] / self._lambda_2]
+        #     else:
+        #         lambdas += [trades_consolidated[price_level]]
+        #         # lambdas_bis += [trades_count[price_level] / self._lambda_2]
 
         # Adjust to be able to calculate log
-        lambdas_adj = [10**-10 if x==0 else x for x in lambdas]
+        # lambdas_adj = [10**-10 if x==0 else x for x in lambdas]
         # lambdas_bis_adj = [10 ** -10 if x == 0 else x for x in lambdas_bis]
 
         # Fit the probability density function; reuse previously calculated parameters as initial values
         try:
-
-            params = curve_fit(lambda t, a, b: a*np.exp(-b*t),
-                               price_levels,
-                               lambdas_adj,
-                               p0=(self._alpha, self._kappa),
-                               method='dogbox',
-                               bounds=([0, 0], [np.inf, np.inf]))
-
-            self._old_kappa = Decimal(str(params[0][1]))
-            self._old_alpha = Decimal(str(params[0][0]))
-
-            # second implementation:
             self.spread_levels.sort()
             lambda_emp = []
             lambda_emp = [np.log(self.lambda_spread[spread] / self.lambda_2) for
@@ -243,17 +234,19 @@ cdef class TradingIntensityIndicator():
             lin_reg_model.fit(spread_levels, lambda_emp)
             kappa = -lin_reg_model.coef_.item()
             intensity_a = math.exp(lin_reg_model.intercept_)
-            average_volume = (self._average_bought_qty + self._average_sold_qty ) /2
+            average_volume = (self._average_bought_qty + self._average_sold_qty ) / 2
 
             self._alpha = Decimal(average_volume * intensity_a)
             self._kappa = Decimal(kappa)
 
-            self.logger().info(f"new model A={self._alpha} "
-                               f"old model A={self._old_alpha} "
-                               f" Q={average_volume}")
-            self.logger().info(f"new model k={self._kappa}"
-                               f"old model k: {self._old_kappa}")
-
+            # self.logger().info(f"new model A={self._alpha} "
+            #                    f"old model A={self._old_alpha} "
+            #                    f" Q={average_volume}")
+            # self.logger().info(f"new model k={self._kappa}"
+            #                    f"old model k: {self._old_kappa}")
+            # self.logger().info(f"A={self._alpha} "
+            #                    f"k={self._kappa} "
+            #                    f"Average volume={average_volume}")
 
         except (RuntimeError, ValueError) as e:
             pass
@@ -271,11 +264,11 @@ cdef class TradingIntensityIndicator():
             return
 
         # Skip snapshots where no trades occured
-        if self._bids_df is not None and self._bids_df.equals(bids_df):
-            return
+        # if self._bids_df is not None and self._bids_df.equals(bids_df):
+        #     return
 
-        if self._asks_df is not None and self._asks_df.equals(asks_df):
-            return
+        # if self._asks_df is not None and self._asks_df.equals(asks_df):
+        #     return
 
         if self._bids_df is not None and self._asks_df is not None:
             # Retrieve previous order book, evaluate execution
@@ -315,7 +308,5 @@ cdef class TradingIntensityIndicator():
     def average_sold_qty(self) -> float:
         return self._average_sold_qty
 
-    def get_old_param(self) -> Tuple[ float, float]:
-        return self._old_alpha, self._old_kappa
 
 

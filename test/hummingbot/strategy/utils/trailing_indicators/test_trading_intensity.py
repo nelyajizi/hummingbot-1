@@ -64,7 +64,7 @@ class TradingIntensityTest(unittest.TestCase):
     def test_calculate_trading_intensity(self):
         N_SAMPLES = 1000
 
-        self.indicator = TradingIntensityIndicator(self.BUFFER_LENGTH)
+        self.indicator = TradingIntensityIndicator(sampling_length=self.BUFFER_LENGTH)
 
         original_price_mid = 100
         original_spread = Decimal("10")

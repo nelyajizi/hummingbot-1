@@ -126,7 +126,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         self.c_add_markets([market_info.market])
         self._ticks_to_be_ready = max(volatility_buffer_size, trading_intensity_buffer_size)
         self._avg_vol = InstantVolatilityIndicator(sampling_length=volatility_buffer_size)
-        self._trading_intensity = TradingIntensityIndicator(trading_intensity_buffer_size)
+        self._trading_intensity = TradingIntensityIndicator(order_refresh_time=order_refresh_time, sampling_length=trading_intensity_buffer_size)
         self._last_sampling_timestamp = 0
         self._alpha = None
         self._kappa = None
@@ -744,7 +744,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         # Volatility has to be in absolute values (prices) because in calculation of reservation price it's not multiplied by the current price, therefore
         # it can't be a percentage. The result of the multiplication has to be an absolute price value because it's being subtracted from the current price
         vol = self.get_volatility()
-        mid_price_variance = vol ** 2
+        # mid_price_variance = vol ** 2
 
         # order book liquidity - kappa and alpha have to represent absolute values because the second member of the optimal spread equation has to be an absolute price
         # and from the reservation price calculation we know that gamma's unit is not absolute price
@@ -762,29 +762,66 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                 # a fixed time left
                 time_left_fraction = 1
 
-            self._reservation_price = price - (q * self._gamma * vol * time_left_fraction)
+            # self._reservation_price = price - (q * self._gamma * vol * time_left_fraction)
+            #
+            # self._optimal_spread = self._gamma * vol * time_left_fraction
+            # self._optimal_spread += 2 * Decimal(1 + self._gamma / self._kappa).ln() / self._gamma
+            #
+            # min_spread = price / 100 * Decimal(str(self._min_spread))
+            #
+            # max_limit_bid = price - min_spread / 2
+            # min_limit_ask = price + min_spread / 2
+            #
+            # self._optimal_ask = max(self._reservation_price + self._optimal_spread / 2, min_limit_ask)
+            # self._optimal_bid = min(self._reservation_price - self._optimal_spread / 2, max_limit_bid)
+            #
+            # # This is not what the algorithm will use as proposed bid and ask. This is just the raw output.
+            # # Optimal bid and optimal ask prices will be used
+            # if self._is_debug:
+            #     self.logger().info(f"q={q:.4f} | "
+            #                        f"vol={vol:.10f}")
+            #     self.logger().info(f"mid_price={price:.10f} | "
+            #                        f"reservation_price={self._reservation_price:.10f} | "
+            #                        f"optimal_spread={self._optimal_spread:.10f}")
+            #     self.logger().info(f"optimal_bid={(price-(self._reservation_price - self._optimal_spread / 2)) / price * 100:.4f}% | "
+            #                        f"optimal_ask={((self._reservation_price + self._optimal_spread / 2) - price) / price * 100:.4f}%")
+            min_spread = Decimal(price) / 100 * Decimal(str(self._min_spread))
+            max_limit_bid = Decimal(price) - min_spread / 2
+            min_limit_ask = Decimal(price) + min_spread / 2
 
-            self._optimal_spread = self._gamma * vol * time_left_fraction
-            self._optimal_spread += 2 * Decimal(1 + self._gamma / self._kappa).ln() / self._gamma
+            # self._optimal_ask = max(self._reservation_price + self._optimal_spread / 2, min_limit_ask)
+            # self._optimal_bid = min(self._reservation_price - self._optimal_spread / 2, max_limit_bid)
 
-            min_spread = price / 100 * Decimal(str(self._min_spread))
+            temp = Decimal((vol ** 2) * self._gamma / 2 * self._kappa * self._alpha)
+            temp *= Decimal((1 + self._gamma / self._kappa) ** (1 + self._kappa / self._gamma))
 
-            max_limit_bid = price - min_spread / 2
-            min_limit_ask = price + min_spread / 2
+            ask_spread = Decimal(1 + self._gamma / self._kappa).ln() / self.gamma
+            ask_spread -= ((2 * q - 1) / 2) * temp.sqrt()
 
-            self._optimal_ask = max(self._reservation_price + self._optimal_spread / 2, min_limit_ask)
-            self._optimal_bid = min(self._reservation_price - self._optimal_spread / 2, max_limit_bid)
+            bid_spread = Decimal(1 + self._gamma / self._kappa).ln() / self._gamma
+            bid_spread += ((2 * q + 1) / 2) * temp.sqrt()
+
+            ra = Decimal(price) + ask_spread
+            rb = Decimal(price) - bid_spread
+
+            self._optimal_ask = max(ra, min_limit_ask)
+            self._optimal_bid = min(rb, max_limit_bid)
+
+            self._reservation_price = (ra + rb) / 2
+            self._optimal_spread = (self._optimal_ask - self._optimal_bid) / Decimal(2)
 
             # This is not what the algorithm will use as proposed bid and ask. This is just the raw output.
             # Optimal bid and optimal ask prices will be used
             if self._is_debug:
                 self.logger().info(f"q={q:.4f} | "
                                    f"vol={vol:.10f}")
+                self.logger().info(f"alpha={self._alpha:.4f} | "
+                                   f"kappa={self.kappa:.10f}")
                 self.logger().info(f"mid_price={price:.10f} | "
                                    f"reservation_price={self._reservation_price:.10f} | "
                                    f"optimal_spread={self._optimal_spread:.10f}")
-                self.logger().info(f"optimal_bid={(price-(self._reservation_price - self._optimal_spread / 2)) / price * 100:.4f}% | "
-                                   f"optimal_ask={((self._reservation_price + self._optimal_spread / 2) - price) / price * 100:.4f}%")
+                self.logger().info(f"optimal_bid={self._optimal_bid :.4f}% | "
+                                   f"optimal_ask={self._optimal_ask :.4f}%")
 
     def calculate_reservation_price_and_optimal_spread(self):
         return self.c_calculate_reservation_price_and_optimal_spread()
@@ -1388,16 +1425,13 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                                        'inventory_target_pct',
                                        'last_trade_price',
                                        'last_trade_time',
-                                       'last_trade_type',
-                                       'old_alpha',
-                                       'old_kappa')])
+                                       'last_trade_type')])
             df_header.to_csv(self._debug_csv_path, mode='a', header=False, index=False)
 
         if self._execution_state.time_left is not None and self._execution_state.closing_time is not None:
             time_left_fraction = self._execution_state.time_left / self._execution_state.closing_time
         else:
             time_left_fraction = None
-        old_alpha, old_kappa = self._trading_intensity.get_old_param()
         df = pd.DataFrame([(mid_price,
                             best_bid,
                             best_ask,
@@ -1420,7 +1454,5 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                             self.inventory_target_base_pct,
                             last_trade_price,
                             last_trade_time,
-                            last_trade_type,
-                            old_alpha,
-                            old_kappa)])
+                            last_trade_type)])
         df.to_csv(self._debug_csv_path, mode='a', header=False, index=False)
