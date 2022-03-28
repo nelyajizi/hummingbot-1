@@ -99,7 +99,7 @@ cdef class TradingIntensityIndicator():
 
         # divide by tick_size ?
         # maybe we should use the last_mid_price instead, the order has probably already eaten the lob
-        spread = self._last_price - price
+        spread = self._last_price - price_prev
         # rounding
         spread = abs(round(spread  / delta_spread, 0) * delta_spread)
         # self.logger().info(f"spread:{spread}")
@@ -108,7 +108,7 @@ cdef class TradingIntensityIndicator():
         if self._last_price_type == TradeType.BUY:
             self.logger().info(f"last_price_time: {self._last_price_time} ")
             self.logger().info(f"_last_inserted_trade_time: {self._last_inserted_trade_time} ")
-            self.lambda_2 += (self._last_price_time - self._last_inserted_trade_time) / self._order_refresh_time
+            self.lambda_2 += (self._last_price_time - self._last_inserted_trade_time) #/ self._order_refresh_time
             self.logger().info(f"lambda 2: {self.lambda_2} ")
 
             self._nb_buys += 1
@@ -144,7 +144,7 @@ cdef class TradingIntensityIndicator():
         elif self._last_price_type == TradeType.SELL:
             # self.logger().info(f"last_price_time: {self._last_price_time} ")
             # self.logger().info(f"_last_inserted_trade_time: {self._last_inserted_trade_time} ")
-            self.lambda_2 += (self._last_price_time - self._last_inserted_trade_time) / self._order_refresh_time
+            self.lambda_2 += (self._last_price_time - self._last_inserted_trade_time) #/ self._order_refresh_time
             self.logger().info(f"lambda 2: {self.lambda_2}")
             # average sell quantity:
             self._nb_sells += 1
@@ -239,11 +239,11 @@ cdef class TradingIntensityIndicator():
             self._alpha = Decimal(average_volume * intensity_a)
             self._kappa = Decimal(kappa)
 
-            # self.logger().info(f"new model A={self._alpha} "
-            #                    f"old model A={self._old_alpha} "
-            #                    f" Q={average_volume}")
-            # self.logger().info(f"new model k={self._kappa}"
-            #                    f"old model k: {self._old_kappa}")
+            self.logger().info(f"new model A={self._alpha} "
+                                f"old model A={self._old_alpha} "
+                                f" Q={average_volume}")
+            self.logger().info(f"new model k={self._kappa}"
+                                f"old model k: {self._old_kappa}")
             # self.logger().info(f"A={self._alpha} "
             #                    f"k={self._kappa} "
             #                    f"Average volume={average_volume}")
