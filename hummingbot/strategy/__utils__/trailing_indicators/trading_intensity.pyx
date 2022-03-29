@@ -99,25 +99,22 @@ cdef class TradingIntensityIndicator():
 
         # divide by tick_size ?
         # maybe we should use the last_mid_price instead, the order has probably already eaten the lob
-        spread = self._last_price - price
+        spread = self._last_price - price_prev
         # rounding
         spread = abs(round(spread  / delta_spread, 0) * delta_spread)
         # self.logger().info(f"spread:{spread}")
 
         real_trades = []
         if self._last_price_type == TradeType.BUY:
-            self.logger().info(f"last_price_time: {self._last_price_time} ")
-            self.logger().info(f"_last_inserted_trade_time: {self._last_inserted_trade_time} ")
+            # self.logger().info(f"last_price_time: {self._last_price_time} ")
+            # self.logger().info(f"_last_inserted_trade_time: {self._last_inserted_trade_time} ")
             self.lambda_2 += (self._last_price_time - self._last_inserted_trade_time) / self._order_refresh_time
-            self.logger().info(f"lambda 2: {self.lambda_2} ")
-
+            # self.logger().info(f"lambda 2: {self.lambda_2} ")
             self._nb_buys += 1
             if self._nb_buys == 1:
                 self._average_bought_qty = self._last_price_amount
             else:
                 self._average_bought_qty = self._average_bought_qty - (1 / (self._nb_buys + 1)) * (self._average_bought_qty - self._last_price_amount)
-            # self.logger().info(f"nb buy: {self._nb_buys} "
-            #                    f"average buy volume: {self._average_bought_qty} ")
 
             if self._last_price <= bid_prev:
                 # limit order, do nothing
@@ -140,12 +137,11 @@ cdef class TradingIntensityIndicator():
                 self._last_inserted_trade_price = self._last_price
                 self._last_inserted_trade_type = self._last_price_type
                 self._last_inserted_trade_amount = self._last_price_amount
-
         elif self._last_price_type == TradeType.SELL:
             # self.logger().info(f"last_price_time: {self._last_price_time} ")
             # self.logger().info(f"_last_inserted_trade_time: {self._last_inserted_trade_time} ")
             self.lambda_2 += (self._last_price_time - self._last_inserted_trade_time) / self._order_refresh_time
-            self.logger().info(f"lambda 2: {self.lambda_2}")
+            # self.logger().info(f"lambda 2: {self.lambda_2}")
             # average sell quantity:
             self._nb_sells += 1
             if self._nb_sells == 1:
@@ -192,34 +188,6 @@ cdef class TradingIntensityIndicator():
             list lambdas
             list price_levels
 
-        # Calculate lambdas / trading intensities
-        # lambdas = []
-        # lambdas_bis = []
-        # trades_consolidated = {}
-        # trades_count = {}
-        # price_levels = []
-        # for tick in self._trades:
-        #     for trade in tick:
-        #         if trade['price_level'] not in trades_consolidated.keys():
-        #             trades_consolidated[trade['price_level']] = 0
-        #             price_levels += [trade['price_level']]
-        #
-        #         trades_consolidated[trade['price_level']] += trade['amount']
-        #         # trades_count[trade['price_level']] += 1
-        # price_levels = sorted(price_levels, reverse=True)
-
-        # for price_level in price_levels:
-        #     if len(lambdas) == 0:
-        #         lambdas += [trades_consolidated[price_level]]
-        #         # lambdas_bis += [trades_count[price_level] / self._lambda_2]
-        #     else:
-        #         lambdas += [trades_consolidated[price_level]]
-        #         # lambdas_bis += [trades_count[price_level] / self._lambda_2]
-
-        # Adjust to be able to calculate log
-        # lambdas_adj = [10**-10 if x==0 else x for x in lambdas]
-        # lambdas_bis_adj = [10 ** -10 if x == 0 else x for x in lambdas_bis]
-
         # Fit the probability density function; reuse previously calculated parameters as initial values
         try:
             self.spread_levels.sort()
@@ -239,15 +207,6 @@ cdef class TradingIntensityIndicator():
             self._alpha = Decimal(average_volume * intensity_a)
             self._kappa = Decimal(kappa)
 
-            # self.logger().info(f"new model A={self._alpha} "
-            #                    f"old model A={self._old_alpha} "
-            #                    f" Q={average_volume}")
-            # self.logger().info(f"new model k={self._kappa}"
-            #                    f"old model k: {self._old_kappa}")
-            # self.logger().info(f"A={self._alpha} "
-            #                    f"k={self._kappa} "
-            #                    f"Average volume={average_volume}")
-
         except (RuntimeError, ValueError) as e:
             pass
 
@@ -263,17 +222,9 @@ cdef class TradingIntensityIndicator():
         if bids_df.empty or asks_df.empty:
             return
 
-        # Skip snapshots where no trades occured
-        # if self._bids_df is not None and self._bids_df.equals(bids_df):
-        #     return
-
-        # if self._asks_df is not None and self._asks_df.equals(asks_df):
-        #     return
-
         if self._bids_df is not None and self._asks_df is not None:
             # Retrieve previous order book, evaluate execution
             self.c_simulate_execution(bids_df, asks_df)
-
             if self.is_sampling_buffer_full:
                 # Estimate alpha and kappa
                 self.c_estimate_intensity()
