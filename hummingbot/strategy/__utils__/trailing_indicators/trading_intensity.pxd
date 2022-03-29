@@ -28,6 +28,8 @@ cdef class TradingIntensityIndicator():
         double _old_kappa
         double _old_alpha
         int _order_refresh_time
+        double initial_time
+
 
     cdef c_simulate_execution(self, bids_df, asks_df)
     cdef c_estimate_intensity(self)
