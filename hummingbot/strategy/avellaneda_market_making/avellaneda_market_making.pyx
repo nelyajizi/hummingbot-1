@@ -26,8 +26,8 @@ from hummingbot.core.event.events import OrderType
 from hummingbot.core.event.events import TradeType
 from hummingbot.core.network_iterator import NetworkStatus
 from hummingbot.core.utils import map_df_to_str
-from hummingbot.strategy.__utils__.trailing_indicators.instant_volatility import InstantVolatilityIndicator
-from hummingbot.strategy.__utils__.trailing_indicators.instant_drift import InstantDriftIndicator
+from hummingbot.strategy.__utils__.trailing_indicators.ArithmeticBrownian_indicator import VolatilityAB_Indicator
+from hummingbot.strategy.__utils__.trailing_indicators.ArithmeticBrownian_indicator import DriftAB_Indicator
 from hummingbot.strategy.__utils__.trailing_indicators.trading_intensity import TradingIntensityIndicator
 from hummingbot.strategy.conditional_execution_state import RunAlwaysExecutionState
 from hummingbot.strategy.data_types import (
@@ -126,8 +126,8 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
 
         self.c_add_markets([market_info.market])
         self._ticks_to_be_ready = max(volatility_buffer_size, trading_intensity_buffer_size)
-        self._avg_vol = InstantVolatilityIndicator(sampling_length=volatility_buffer_size)
-        self._avg_drift = InstantDriftIndicator(sampling_length=volatility_buffer_size)
+        self._avg_vol = VolatilityAB_Indicator(sampling_length=volatility_buffer_size)
+        self._avg_drift = DriftAB_Indicator(sampling_length=volatility_buffer_size)
         self._trading_intensity = TradingIntensityIndicator(order_refresh_time=order_refresh_time, sampling_length=trading_intensity_buffer_size)
         self._last_sampling_timestamp = 0
         self._alpha = None
@@ -177,7 +177,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         return self._avg_vol
 
     @avg_vol.setter
-    def avg_vol(self, indicator: InstantVolatilityIndicator):
+    def avg_vol(self, indicator: VolatilityAB_Indicator):
         self._avg_vol = indicator
 
     @property
@@ -185,7 +185,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         return self._avg_drift
 
     @avg_drift.setter
-    def avg_drift(self, indicator: InstantDriftIndicator):
+    def avg_drift(self, indicator: DriftAB_Indicator):
         self._avg_drift = indicator
 
     @property
