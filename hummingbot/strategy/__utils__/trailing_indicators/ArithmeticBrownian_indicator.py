@@ -29,13 +29,10 @@ class DriftAB_Indicator(BaseTrailingIndicator):
 
     def _indicator_calculation(self) -> float:
         np_sampling_buffer = self._sampling_buffer.get_as_numpy_array()
-        if np_sampling_buffer.size == 1:
-            drift=0
-        else :
-            mu_delta = np.sum(np.diff(np_sampling_buffer)) / np_sampling_buffer.size
-            var_delta = np.sum(np.square(np.diff(np_sampling_buffer)-mu_delta)) / (np_sampling_buffer.size-1)
-            drift = mu_delta + var_delta/2
-        return drift
+        if np_sampling_buffer.size < self._sampling_length:
+            return np.nan
+        mu_delta = np.sum(np.diff(np_sampling_buffer)) / np_sampling_buffer.size
+        return mu_delta
 
     def _processing_calculation(self) -> float:
         # Only the last calculated indicator, not an average of multiple past indicator

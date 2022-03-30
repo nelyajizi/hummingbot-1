@@ -28,6 +28,7 @@ from hummingbot.core.network_iterator import NetworkStatus
 from hummingbot.core.utils import map_df_to_str
 from hummingbot.strategy.__utils__.trailing_indicators.ArithmeticBrownian_indicator import VolatilityAB_Indicator
 from hummingbot.strategy.__utils__.trailing_indicators.ArithmeticBrownian_indicator import DriftAB_Indicator
+from hummingbot.strategy.__utils__.trailing_indicators.instant_volatility import InstantVolatilityIndicator
 from hummingbot.strategy.__utils__.trailing_indicators.trading_intensity import TradingIntensityIndicator
 from hummingbot.strategy.conditional_execution_state import RunAlwaysExecutionState
 from hummingbot.strategy.data_types import (
@@ -126,8 +127,8 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
 
         self.c_add_markets([market_info.market])
         self._ticks_to_be_ready = max(volatility_buffer_size, trading_intensity_buffer_size)
-        self._avg_vol = VolatilityAB_Indicator(sampling_length=volatility_buffer_size)
-        self._avg_drift = DriftAB_Indicator(sampling_length=volatility_buffer_size)
+        self._avg_vol = VolatilityAB_Indicator(sampling_length=volatility_buffer_size, processing_length=int(order_refresh_time))
+        self._avg_drift = DriftAB_Indicator(sampling_length=volatility_buffer_size, processing_length=int(order_refresh_time))
         self._trading_intensity = TradingIntensityIndicator(order_refresh_time=order_refresh_time, sampling_length=trading_intensity_buffer_size)
         self._last_sampling_timestamp = 0
         self._alpha = None
@@ -693,6 +694,8 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         
         self._avg_vol.add_sample(price)
         self._avg_drift.add_sample(price)
+        self.logger().info(f"drift={self.avg_drift.current_value}")
+
         self._trading_intensity.add_sample(snapshot, trade_tuple)
         # self.logger().info(f"average_sold_qty:{self._trading_intensity.average_sold_qty}"
         #                    f"average_bought_qty: {self._trading_intensity.average_bought_qty}")
@@ -760,9 +763,10 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         q = (market.get_balance(self.base_asset) - q_target)
         # Volatility has to be in absolute values (prices) because in calculation of reservation price it's not multiplied by the current price, therefore
         # it can't be a percentage. The result of the multiplication has to be an absolute price value because it's being subtracted from the current price
-        vol = self.get_volatility()
-        drift = self.get_drift()
+        vol = Decimal(self._avg_vol.current_value)
+        drift = Decimal(self.avg_drift.current_value)
         # mid_price_variance = vol ** 2
+        # self.logger().info(f"drift={drift}; vol={vol}")
 
         # order book liquidity - kappa and alpha have to represent absolute values because the second member of the optimal spread equation has to be an absolute price
         # and from the reservation price calculation we know that gamma's unit is not absolute price
