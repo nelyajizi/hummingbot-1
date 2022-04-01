@@ -13,8 +13,8 @@ class VolatilityAB_Indicator(BaseTrailingIndicator):
         if np_sampling_buffer.size == 1:
             vol=0
         else :
-            mu_delta = np.sum(np.diff(np_sampling_buffer)) / np_sampling_buffer.size
-            var_delta = np.sum(np.square(np.diff(np_sampling_buffer)-mu_delta)) / (np_sampling_buffer.size-1)
+            mu_delta = np.sum(np.diff(np_sampling_buffer)) / (np.diff(np_sampling_buffer)).size
+            var_delta = np.sum(np.square(np.diff(np_sampling_buffer)-mu_delta)) / ((np.diff(np_sampling_buffer)).size-1)
             vol = np.sqrt(var_delta)
         return vol
 
@@ -33,7 +33,7 @@ class DriftAB_Indicator(BaseTrailingIndicator):
             drift=0
         else :
             mu_delta = np.sum(np.diff(np_sampling_buffer)) / np_sampling_buffer.size
-            var_delta = np.sum(np.square(np.diff(np_sampling_buffer)-mu_delta)) / (np_sampling_buffer.size-1)
+            var_delta = np.sum(np.square(np.diff(np_sampling_buffer)-mu_delta)) / ((np.diff(np_sampling_buffer)).size-1)
             drift = mu_delta + var_delta/2
         return drift
 

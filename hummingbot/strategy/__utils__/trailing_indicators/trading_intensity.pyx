@@ -75,7 +75,7 @@ cdef class TradingIntensityIndicator():
             object ask_prev
             object price_prev
             list trades
-            delta_spread = 0.0001
+            delta_spread = 0.001
 
         if self._last_price_time is np.nan:
             self.logger().info("_last_price_time is nan")
@@ -106,7 +106,7 @@ cdef class TradingIntensityIndicator():
         # maybe we should use the last_mid_price instead, the order has probably already eaten the lob
         spread = self._last_price - price_prev
         # rounding
-        spread = abs(round(spread  / delta_spread, 0) * delta_spread)
+        spread = round(abs(int(round(spread  / delta_spread, 0)) * delta_spread),4)
         # self.logger().info(f"spread:{spread}")
 
         # real_trades = []
@@ -231,15 +231,25 @@ cdef class TradingIntensityIndicator():
             lambda_emp = lambda_emp.values.reshape(len(lambda_emp), 1)
             lin_reg_model = linear_model.LinearRegression()
             lin_reg_model.fit(spread_levels, lambda_emp)
+            r_2=lin_reg_model.score(spread_levels, lambda_emp)
             kappa = -lin_reg_model.coef_.item()
             intensity_a = math.exp(lin_reg_model.intercept_)
             # average_volume = (self._average_bought_qty + self._average_sold_qty ) / 2
 
-            self._alpha = Decimal(avg_volume * intensity_a)
+            self._alpha = Decimal(intensity_a) #Decimal(avg_volume * intensity_a)
             self._kappa = Decimal(kappa)
 
             self.logger().info(f"alpha: {self._alpha}")
             self.logger().info(f"kappa: {self._kappa}")
+            self.logger().info(f"R_2: {r_2}")
+
+            #########
+            # self.logger().info(f"spread: {spread_levels}")
+            self.logger().info(f"lambda_spread: {lambda_spread}")
+            # self.logger().info(f"lambda_2: {lambda_2}")
+            # self.logger().info(f"Intensité: {lambda_emp}")
+            #########
+
         except (RuntimeError, ValueError) as e:
             pass
 
