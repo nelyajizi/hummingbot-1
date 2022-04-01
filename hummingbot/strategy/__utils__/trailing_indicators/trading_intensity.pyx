@@ -121,7 +121,10 @@ cdef class TradingIntensityIndicator():
             else:
                 self._average_bought_qty = self._average_bought_qty - (1 / (self._nb_buys + 1)) * (self._average_bought_qty - self._last_price_amount)
 
-            if self._last_price <= bid_prev:
+            if spread == 0:
+                # do nothing
+                return
+            elif self._last_price <= bid_prev:
                 # limit order, do nothing
                 return
             elif (self._last_price > bid_prev) and (self._last_price < ask_prev):
@@ -152,7 +155,10 @@ cdef class TradingIntensityIndicator():
             else:
                 self._average_sold_qty = self._average_sold_qty - (1 / (self._nb_sells + 1)) * (self._average_sold_qty - self._last_price_amount)
 
-            if self._last_price >= ask_prev:
+            if spread == 0:
+                # do nothing
+                return
+            elif self._last_price >= ask_prev:
                 # limit order, do nothing
                 return
             elif (self._last_price > bid_prev) and (self._last_price < ask_prev):
@@ -217,19 +223,30 @@ cdef class TradingIntensityIndicator():
 
                 i += 1
                 last_trade_time = trade['time']
+                #self.logger().info(f"trade['time']: {trade['time']}\n "
+                #               f"trade['price_level']: {trade['price_level']}  ")
 
             self.logger().info(f"avg_volume: {avg_volume}\n "
                                f"lambda_2: {lambda_2}  ")
 
             spread_levels.sort()
             lambda_emp = []
-            lambda_emp = [np.log(lambda_spread[spread] / lambda_2) for
+
+            real_lambda_spread = lambda_spread.copy()
+            for spread_j in lambda_spread:
+                real_lambda_spread[spread_j]=0
+                for spread_k in lambda_spread:
+                    if spread_j <= spread_k:
+                        real_lambda_spread[spread_j] += lambda_spread[spread_k]
+
+            lambda_emp = [np.log(real_lambda_spread[spread] / lambda_2) for
                                spread in spread_levels]
             lambda_emp = pd.DataFrame(lambda_emp)
             spread_levels = pd.DataFrame(spread_levels)
             spread_levels = spread_levels.values.reshape(len(spread_levels), 1)
-            lambda_emp = lambda_emp.values.reshape(len(lambda_emp), 1)
-            lin_reg_model = linear_model.LinearRegression()
+            lambda_emp = (lambda_emp.values.reshape(len(lambda_emp), 1)).squeeze()
+            #lin_reg_model = linear_model.LinearRegression()
+            lin_reg_model = linear_model.TheilSenRegressor()
             lin_reg_model.fit(spread_levels, lambda_emp)
             r_2=lin_reg_model.score(spread_levels, lambda_emp)
             kappa = -lin_reg_model.coef_.item()
@@ -244,10 +261,11 @@ cdef class TradingIntensityIndicator():
             self.logger().info(f"R_2: {r_2}")
 
             #########
-            # self.logger().info(f"spread: {spread_levels}")
-            self.logger().info(f"lambda_spread: {lambda_spread}")
-            # self.logger().info(f"lambda_2: {lambda_2}")
-            # self.logger().info(f"Intensité: {lambda_emp}")
+            #self.logger().info(f"spread: {spread_levels}")
+            #self.logger().info(f"lambda_spread: {lambda_spread}")
+            #self.logger().info(f"real_lambda_spread: {real_lambda_spread}")
+            #self.logger().info(f"lambda_2: {lambda_2}")
+            #self.logger().info(f"Intensité: {lambda_emp}")
             #########
 
         except (RuntimeError, ValueError) as e:

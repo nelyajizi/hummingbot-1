@@ -548,6 +548,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
             lines.extend(["", "  No active maker orders."])
 
         volatility_pct = self._avg_vol.current_value / float(self.get_price()) * 100.0
+        drift_pct = self._avg_drift.current_value / float(self.get_price()) * 100.0
         if all((self._gamma, self._alpha, self._kappa, not isnan(volatility_pct))):
             lines.extend(["", f"  Strategy parameters:",
                           f"    risk_factor(\u03B3)= {self._gamma:.5E}",
@@ -555,7 +556,8 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                           f"    order_book_depth_factor(\u03BA)= {self._kappa:.5E}",
                           f"    volatility= {volatility_pct:.3f}%",
                           f"    volatility= {self._avg_vol.current_value:.5E}",
-                          f"    drift= {self._avg_drift.current_value:.5E}"])
+                          f"    drift= {self._avg_drift.current_value:.5E}",
+                          f"    drift= {drift_pct:.3f}%"])
             if self._execution_state.time_left is not None:
                 lines.extend([f"    time until end of trading cycle = {str(datetime.timedelta(seconds=float(self._execution_state.time_left)//1e3))}"])
             else:

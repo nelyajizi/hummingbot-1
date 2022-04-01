@@ -10,10 +10,15 @@ class VolatilityAB_Indicator(BaseTrailingIndicator):
 
     def _indicator_calculation(self) -> float:
         np_sampling_buffer = self._sampling_buffer.get_as_numpy_array()
-        if np_sampling_buffer.size == 1:
+        if np_sampling_buffer.size <= 1:
             vol=0
         else :
-            mu_delta = np.sum(np.diff(np_sampling_buffer)) / (np.diff(np_sampling_buffer)).size
+            ###### moyenne pondérée
+            w = np.arange(1,(np.diff(np_sampling_buffer)).size+1,1,dtype=int)
+            ###### moyenne non pondérée
+            # w = np.ones((np.diff(np_sampling_buffer)).size)
+            ######
+            mu_delta = np.average(np.diff(np_sampling_buffer) , weights=w) / np.sum(w)
             var_delta = np.sum(np.square(np.diff(np_sampling_buffer)-mu_delta)) / ((np.diff(np_sampling_buffer)).size-1)
             vol = np.sqrt(var_delta)
         return vol
@@ -29,10 +34,15 @@ class DriftAB_Indicator(BaseTrailingIndicator):
 
     def _indicator_calculation(self) -> float:
         np_sampling_buffer = self._sampling_buffer.get_as_numpy_array()
-        if np_sampling_buffer.size == 1:
+        if np_sampling_buffer.size <= 1:
             drift=0
         else :
-            drift = np.sum(np.diff(np_sampling_buffer)) / (np.diff(np_sampling_buffer)).size
+            ###### moyenne pondérée
+            w = np.arange(1,(np.diff(np_sampling_buffer)).size+1,1,dtype=int)
+            ###### moyenne non pondérée
+            # w = np.ones((np.diff(np_sampling_buffer)).size)
+            ######
+            drift = np.average(np.diff(np_sampling_buffer) , weights=w) / np.sum(w)
         return drift
 
     def _processing_calculation(self) -> float:
