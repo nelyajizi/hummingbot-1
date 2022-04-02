@@ -253,7 +253,7 @@ cdef class TradingIntensityIndicator():
             intensity_a = math.exp(lin_reg_model.intercept_)
             # average_volume = (self._average_bought_qty + self._average_sold_qty ) / 2
 
-            self._alpha = Decimal(intensity_a) #Decimal(avg_volume * intensity_a)
+            self._alpha = Decimal(avg_volume * intensity_a)
             self._kappa = Decimal(kappa)
 
             self.logger().info(f"alpha: {self._alpha}")
