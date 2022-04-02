@@ -189,7 +189,6 @@ class HistoryCommand:
         perf_data.extend(
             [["Total P&L               ", f"{PerformanceMetrics.smart_round(perf.total_pnl, precision)} {quote}"],
              ["Return %                ", f"{perf.return_pct:.2%}"],
-             ["------------------------", ""],
              ["Initial portfolio value ", f"{PerformanceMetrics.smart_round(perf.hold_value_init, precision)} {quote}"],
              ["Change P&L              ", f"{PerformanceMetrics.smart_round(perf.change_pnl, precision)} {quote}"],
              ["Total P&L (incl. change)", f"{PerformanceMetrics.smart_round(perf.total_pnl_v2, precision)} {quote}"],
