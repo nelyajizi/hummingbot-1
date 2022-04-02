@@ -56,6 +56,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         object _latest_parameter_calculation_trading_intensity
         str _debug_csv_path
         object _avg_vol
+        object _avg_drift
         object _trading_intensity
         bint _should_wait_order_cancel_confirmation
 

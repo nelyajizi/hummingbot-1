@@ -44,6 +44,7 @@ class PerformanceMetrics:
     start_base_ratio_pct: Decimal = s_decimal_0
     cur_base_ratio_pct: Decimal = s_decimal_0
 
+    hold_value_init: Decimal = s_decimal_0
     hold_value: Decimal = s_decimal_0
     cur_value: Decimal = s_decimal_0
     trade_pnl: Decimal = s_decimal_0
@@ -51,6 +52,10 @@ class PerformanceMetrics:
     fee_in_quote: Decimal = s_decimal_0
     total_pnl: Decimal = s_decimal_0
     return_pct: Decimal = s_decimal_0
+
+    change_pnl: Decimal = s_decimal_0
+    total_pnl_v2: Decimal = s_decimal_0
+    return_pct_v2: Decimal = s_decimal_0
 
     def __init__(self):
         # fees is a dictionary of token and total fee amount paid in that token.
@@ -287,6 +292,7 @@ class PerformanceMetrics:
         self.cur_base_ratio_pct = self.divide(self.cur_base_bal * self.cur_price,
                                               (self.cur_base_bal * self.cur_price) + self.cur_quote_bal)
 
+        self.hold_value_init = (self.start_base_bal * self.start_price) + self.start_quote_bal
         self.hold_value = (self.start_base_bal * self.cur_price) + self.start_quote_bal
         self.cur_value = (self.cur_base_bal * self.cur_price) + self.cur_quote_bal
         self._calculate_trade_pnl(buys, sells)
@@ -295,3 +301,7 @@ class PerformanceMetrics:
 
         self.total_pnl = self.trade_pnl - self.fee_in_quote
         self.return_pct = self.divide(self.total_pnl, self.hold_value)
+
+        self.change_pnl = self.hold_value - self.hold_value_init
+        self.total_pnl_v2 = self.trade_pnl + self.change_pnl 
+        self.return_pct_v2 = self.divide(self.total_pnl, self.hold_value_init)
