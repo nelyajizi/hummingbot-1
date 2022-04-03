@@ -255,7 +255,6 @@ cdef class TradingIntensityIndicator():
             ## average_volume = (self._average_bought_qty + self._average_sold_qty ) / 2
 
             ##################### NOUVEAU CALCUL D'INTENSITE
-            last_trade_time = self.initial_time
             avg_volume = 0
             median_volume = 0
             spread_levels = []
@@ -265,16 +264,17 @@ cdef class TradingIntensityIndicator():
             duree=0
             nombre_de_periode_dt=0
             i=0
-
+            
+            premier_trade_du_buffer = list(self._trades)[0]
             dernier_trade_du_buffer = list(self._trades)[-1]
-            nombre_de_periode_dt=int((dernier_trade_du_buffer['time']-last_trade_time)/self._order_refresh_time)
+            nombre_de_periode_dt=int((dernier_trade_du_buffer['time']-premier_trade_du_buffer['time'])/self._order_refresh_time)
             self.logger().info(f"nombre de delta_t: {nombre_de_periode_dt}")
             if nombre_de_periode_dt==0:
-                self.logger().warning(f"Le trading_buffer n'est pas suffisamment grand au regard de l'order_refresh")
+                self.logger().info(f"Attention : Le trading_buffer n'est pas suffisamment grand au regard de l'order_refresh")
                 nombre_de_periode_dt=1
 
             for trade in self._trades:
-                duree += (trade['time'] - last_trade_time)
+                duree = (trade['time'] - premier_trade_du_buffer['time'])
                 i = int(duree/self._order_refresh_time)
                 if i<=nombre_de_periode_dt:
                     if trade['price_level'] not in spread_levels:
@@ -282,9 +282,7 @@ cdef class TradingIntensityIndicator():
                         count_spread[trade['price_level']] = 1
                     else:
                         count_spread[trade['price_level']] += 1
-                
                 trade_amount += [trade['amount']]
-                last_trade_time = trade['time']
 
             avg_volume= np.mean(trade_amount)
             median_volume= np.median(trade_amount)
