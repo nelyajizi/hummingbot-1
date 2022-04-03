@@ -202,60 +202,121 @@ cdef class TradingIntensityIndicator():
         # Fit the probability density function; reuse previously calculated parameters as initial values
         try:
             self.logger().info("c_estimate_intensity....")
+            #last_trade_time = self.initial_time
+            #avg_volume = 0
+            #avg_volume_v2 = 0
+            #median_volume = 0
+            #i = 0
+            #lambda_2 = 0
+            #spread_levels = []
+            #trade_amount = []
+            #lambda_spread = {}
+            #for trade in self._trades:
+            #    lambda_2 += (trade['time'] - last_trade_time) #/ self._order_refresh_time
+            #    if trade['price_level'] not in spread_levels:
+            #        spread_levels += [trade['price_level']]
+            #        lambda_spread[trade['price_level']] = 1
+            #    else:
+            #        lambda_spread[trade['price_level']] += 1
+
+            #    trade_amount += [trade['amount']]
+            #    last_trade_time = trade['time']
+            #    #self.logger().info(f"trade['time']: {trade['time']}\n "
+            #    #               f"trade['price_level']: {trade['price_level']}  ")
+
+            #avg_volume= np.mean(trade_amount)
+            #median_volume= np.median(trade_amount)
+            #self.logger().info(f"median_volume: {median_volume}\n "
+            #                   f"avg_volume: {avg_volume}\n "
+            #                   f"lambda_2: {lambda_2}  ")
+
+            #spread_levels.sort()
+            #lambda_emp = []
+
+            #real_lambda_spread = lambda_spread.copy()
+            #for spread_j in lambda_spread:
+            #    real_lambda_spread[spread_j]=0
+            #    for spread_k in lambda_spread:
+            #        if spread_j <= spread_k:
+            #            real_lambda_spread[spread_j] += lambda_spread[spread_k]#
+
+            #lambda_emp = [np.log(real_lambda_spread[spread] / lambda_2) for
+            #                   spread in spread_levels]
+            #lambda_emp = pd.DataFrame(lambda_emp)
+            #spread_levels = pd.DataFrame(spread_levels)
+            #spread_levels = spread_levels.values.reshape(len(spread_levels), 1)
+            #lambda_emp = (lambda_emp.values.reshape(len(lambda_emp), 1)).squeeze()
+            ##lin_reg_model = linear_model.LinearRegression()
+            #lin_reg_model = linear_model.TheilSenRegressor()
+            #lin_reg_model.fit(spread_levels, lambda_emp)
+            #r_2=lin_reg_model.score(spread_levels, lambda_emp)
+            #kappa = -lin_reg_model.coef_.item()
+            #intensity_a = math.exp(lin_reg_model.intercept_)
+            ## average_volume = (self._average_bought_qty + self._average_sold_qty ) / 2
+
+            ##################### NOUVEAU CALCUL D'INTENSITE
             last_trade_time = self.initial_time
             avg_volume = 0
-            i = 0
-            lambda_2 = 0
+            median_volume = 0
             spread_levels = []
-            lambda_spread = {}
+            trade_amount = []
+            count_spread = {}
+            count_emp = []
+            duree=0
+            nombre_de_periode_dt=0
+            i=0
+
+            dernier_trade_du_buffer = list(self._trades)[-1]
+            nombre_de_periode_dt=int((dernier_trade_du_buffer['time']-last_trade_time)/self._order_refresh_time)
+            self.logger().info(f"nombre de delta_t: {nombre_de_periode_dt}")
+            if nombre_de_periode_dt==0:
+                self.logger().warning(f"Le trading_buffer n'est pas suffisamment grand au regard de l'order_refresh")
+                nombre_de_periode_dt=1
+
             for trade in self._trades:
-                lambda_2 += (trade['time'] - last_trade_time) / self._order_refresh_time
-                if trade['price_level'] not in spread_levels:
-                    spread_levels += [trade['price_level']]
-                    lambda_spread[trade['price_level']] = 1
-                else:
-                    lambda_spread[trade['price_level']] += 1
-
-                if avg_volume == 0:
-                    avg_volume = trade['amount']
-                else:
-                    avg_volume = avg_volume - (1 / (i + 1)) * (avg_volume - trade['amount'])
-
-                i += 1
+                duree += (trade['time'] - last_trade_time)
+                i = int(duree/self._order_refresh_time)
+                if i<=nombre_de_periode_dt:
+                    if trade['price_level'] not in spread_levels:
+                        spread_levels += [trade['price_level']]
+                        count_spread[trade['price_level']] = 1
+                    else:
+                        count_spread[trade['price_level']] += 1
+                
+                trade_amount += [trade['amount']]
                 last_trade_time = trade['time']
-                #self.logger().info(f"trade['time']: {trade['time']}\n "
-                #               f"trade['price_level']: {trade['price_level']}  ")
 
-            self.logger().info(f"avg_volume: {avg_volume}\n "
-                               f"lambda_2: {lambda_2}  ")
+            avg_volume= np.mean(trade_amount)
+            median_volume= np.median(trade_amount)
+            self.logger().info(f"median_volume: {median_volume}\n "
+                               f"avg_volume: {avg_volume}")
 
             spread_levels.sort()
-            lambda_emp = []
-
-            real_lambda_spread = lambda_spread.copy()
-            for spread_j in lambda_spread:
-                real_lambda_spread[spread_j]=0
-                for spread_k in lambda_spread:
+            real_count_spread = count_spread.copy()
+            for spread_j in count_spread:
+                real_count_spread[spread_j]=0
+                for spread_k in count_spread:
                     if spread_j <= spread_k:
-                        real_lambda_spread[spread_j] += lambda_spread[spread_k]
+                        real_count_spread[spread_j] += count_spread[spread_k]
 
-            lambda_emp = [np.log(real_lambda_spread[spread] / lambda_2) for
+            count_emp = [np.log(real_count_spread[spread] / nombre_de_periode_dt) for
                                spread in spread_levels]
-            lambda_emp = pd.DataFrame(lambda_emp)
+            count_emp = pd.DataFrame(count_emp)
             spread_levels = pd.DataFrame(spread_levels)
             spread_levels = spread_levels.values.reshape(len(spread_levels), 1)
-            lambda_emp = (lambda_emp.values.reshape(len(lambda_emp), 1)).squeeze()
+            count_emp = (count_emp.values.reshape(len(count_emp), 1)).squeeze()
             #lin_reg_model = linear_model.LinearRegression()
             lin_reg_model = linear_model.TheilSenRegressor()
-            lin_reg_model.fit(spread_levels, lambda_emp)
-            r_2=lin_reg_model.score(spread_levels, lambda_emp)
+            lin_reg_model.fit(spread_levels, count_emp)
+            r_2=lin_reg_model.score(spread_levels, count_emp)
             kappa = -lin_reg_model.coef_.item()
             intensity_a = math.exp(lin_reg_model.intercept_)
             # average_volume = (self._average_bought_qty + self._average_sold_qty ) / 2
+            ############ FIN DU NOUVEAU CALCUL D'INTENSITE
 
-            self._alpha = Decimal(avg_volume * intensity_a)
+            self._alpha = Decimal(median_volume * intensity_a)
             self._kappa = Decimal(kappa)
-
+            self.logger().info(f"intensite : {intensity_a}")
             self.logger().info(f"alpha: {self._alpha}")
             self.logger().info(f"kappa: {self._kappa}")
             self.logger().info(f"R_2: {r_2}")

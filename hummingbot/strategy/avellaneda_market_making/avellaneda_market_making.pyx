@@ -696,7 +696,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         
         self._avg_vol.add_sample(price)
         self._avg_drift.add_sample(price)
-        self.logger().info(f"drift={self.avg_drift.current_value}")
+        #self.logger().info(f"drift={self.avg_drift.current_value}")
 
         self._trading_intensity.add_sample(snapshot, trade_tuple)
         # self.logger().info(f"average_sold_qty:{self._trading_intensity.average_sold_qty}"
