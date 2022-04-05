@@ -54,7 +54,11 @@ cdef class TradingIntensityIndicator():
         # self.spread_levels = []
         self._order_refresh_time = order_refresh_time
         self.initial_time = time.time()
-        # self.mids = []
+        self._price_changes = []
+        self._order_sizes = []
+        self._median_price_impact = np.nan
+        self._avg_impact = np.nan
+        self._bid_ask_spread = []
 
         warnings.simplefilter("ignore", OptimizeWarning)
 
@@ -98,12 +102,22 @@ cdef class TradingIntensityIndicator():
         ask = asks_df["price"].iloc[0]
         price = (bid + ask) / 2
 
+        self._bid_ask_spread += [ask - bid]
+
         bid_prev = _bids_df["price"].iloc[0]
         ask_prev = _asks_df["price"].iloc[0]
         price_prev = (bid_prev + ask_prev) / 2
 
+        diff = price - price_prev
+        if diff != 0:
+            if self._last_price_type == TradeType.BUY:
+                epsilon = 1
+            else:
+                epsilon = -1
+            # self.logger().info(f"epsilon: {epsilon}, deal_type:{self._last_price_type} diff={diff} ")
+            self._price_changes += [np.abs(diff)]
+            self._order_sizes += [self._last_price_amount]
         # divide by tick_size ?
-        # maybe we should use the last_mid_price instead, the order has probably already eaten the lob
         spread = self._last_price - price_prev
         # rounding
         spread = round(abs(int(round(spread  / delta_spread, 0)) * delta_spread),4)
@@ -319,6 +333,27 @@ cdef class TradingIntensityIndicator():
             self.logger().info(f"kappa: {self._kappa}")
             self.logger().info(f"R_2: {r_2}")
 
+            self.logger().info(f"######## Market Impact #######")
+            self._median_price_impact = np.median(self._price_changes)
+            self._avg_impact = np.mean(self._price_changes)
+            self.logger().info(f"median_price_impact: {self._median_price_impact} ")
+            self.logger().info(f"avg_impact: {self._avg_impact} ")
+
+            # log_sizes = pd.DataFrame(self.log_sizes)
+            # price_changes = pd.DataFrame(self.price_changes)
+            # log_sizes = log_sizes.values.reshape(len(log_sizes), 1)
+            # price_changes = (price_changes.values.reshape(len(price_changes), 1)).squeeze()
+            #
+            # lin_reg_model = linear_model.LinearRegression()
+            # lin_reg_model.fit(log_sizes, price_changes)
+            # r_2 = lin_reg_model.score(spread_levels, count_emp)
+            # cst = lin_reg_model.coef_.item()
+            # coeff = lin_reg_model.intercept_
+
+            # self.logger().info(f"coeff: {coeff}")
+            # self.logger().info(f"cst: {cst}")
+            # self.logger().info(f"r_2: {r_2}")
+            self.logger().info(f"######## End Market Impact #######")
             #########
             #self.logger().info(f"spread: {spread_levels}")
             #self.logger().info(f"lambda_spread: {lambda_spread}")
@@ -384,5 +419,26 @@ cdef class TradingIntensityIndicator():
     def average_sold_qty(self) -> float:
         return self._average_sold_qty
 
+    @property
+    def order_sizes(self) -> list:
+        return self._order_sizes
 
+    @property
+    def price_changes(self) -> list:
+        return self._price_changes
 
+    @property
+    def median_price_impact(self) -> float:
+        return self._median_price_impact
+
+    @property
+    def avg_impact(self):
+        return self._avg_impact
+
+    @property
+    def bid_ask_spread(self):
+        return self._bid_ask_spread
+
+    @property
+    def avg_bid_ask_spread(self):
+        return np.average(self._bid_ask_spread)
