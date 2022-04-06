@@ -28,6 +28,8 @@ from hummingbot.core.network_iterator import NetworkStatus
 from hummingbot.core.utils import map_df_to_str
 from hummingbot.strategy.__utils__.trailing_indicators.ArithmeticBrownian_indicator import VolatilityAB_Indicator
 from hummingbot.strategy.__utils__.trailing_indicators.ArithmeticBrownian_indicator import DriftAB_Indicator
+from hummingbot.strategy.__utils__.trailing_indicators.OrnsteinUhlenbeck import OUModelIndicator
+from hummingbot.strategy.__utils__.trailing_indicators.ema_indicator import EMAIndicator
 from hummingbot.strategy.__utils__.trailing_indicators.instant_volatility import InstantVolatilityIndicator
 from hummingbot.strategy.__utils__.trailing_indicators.trading_intensity import TradingIntensityIndicator
 from hummingbot.strategy.conditional_execution_state import RunAlwaysExecutionState
@@ -127,8 +129,15 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
 
         self.c_add_markets([market_info.market])
         self._ticks_to_be_ready = max(volatility_buffer_size, trading_intensity_buffer_size)
-        self._avg_vol = VolatilityAB_Indicator(sampling_length=volatility_buffer_size, processing_length=int(order_refresh_time))
+        self._avg_vol = InstantVolatilityIndicator(sampling_length=volatility_buffer_size, processing_length=int(order_refresh_time))
         self._avg_drift = DriftAB_Indicator(sampling_length=volatility_buffer_size, processing_length=int(order_refresh_time))
+        # self._ema_price = EMAIndicator(sampling_length=volatility_buffer_size,
+        #                               underlying_type="price")
+        # self._ema_diff = EMAIndicator(sampling_length=volatility_buffer_size,
+        #                              underlying_type="diff_price")
+        self._ema_vol = EMAIndicator(sampling_length=volatility_buffer_size,
+                                     underlying_type="volatility")
+        self._ouprocess = OUModelIndicator(sampling_length=volatility_buffer_size)
         self._trading_intensity = TradingIntensityIndicator(order_refresh_time=order_refresh_time, sampling_length=trading_intensity_buffer_size)
         self._last_sampling_timestamp = 0
         self._alpha = None
@@ -172,6 +181,38 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
     @min_spread.setter
     def min_spread(self, value):
         self._min_spread = value
+
+    @property
+    def ouprocess(self):
+        return self._ouprocess
+
+    @ouprocess.setter
+    def ouprocess(self, indicator: OUModelIndicator):
+        self._ouprocess = indicator
+
+    # @property
+    # def ema_price(self):
+    #     return self._ema_price
+    #
+    # @ema_price.setter
+    # def ema_price(self, indicator: EMAIndicator):
+    #     self._ema_price = indicator
+    #
+    # @property
+    # def ema_diff(self):
+    #     return self._ema_diff
+    #
+    # @ema_diff.setter
+    # def ema_diff(self, indicator: EMAIndicator):
+    #     self._ema_diff = indicator
+
+    @property
+    def ema_vol(self):
+        return self._ema_vol
+
+    @ema_vol.setter
+    def ema_vol(self, indicator: EMAIndicator):
+        self.ema_vol = indicator
 
     @property
     def avg_vol(self):
@@ -670,7 +711,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
             self.c_execute_orders_proposal(proposal)
 
         if self._is_debug:
-            self.dump_debug_variables()
+            self.dump_debug_variables(timestamp)
 
     cdef c_collect_market_variables(self, double timestamp):
         market, trading_pair, base_asset, quote_asset = self._market_info
@@ -684,23 +725,21 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         last_trade_amount = order_book.last_trade_amount
 
         trade_tuple = last_trade_time, last_trade_price, last_trade_type, last_trade_amount
-        # self.logger().info(f"last trade price:{last_trade_price}  "
-        #                    f"last trade amount: {last_trade_amount}  "
-        #                    f"last trade type: {last_trade_type}  "
-        #                    f"mid price: {price}")
 
         snapshot = self.get_order_book_snapshot()
 
-        # quantum = market.c_get_order_size_quantum(self.trading_pair, price)
-        # self.logger().info(f"quantum: {quantum}")
-        
         self._avg_vol.add_sample(price)
         self._avg_drift.add_sample(price)
-        self.logger().info(f"drift={self.avg_drift.current_value}")
+        self._ouprocess.add_sample(price)
+        mean_rev, mean_rev_speed, realized_vol = self.ouprocess.current_value
+        half_life = np.nan
+        if mean_rev_speed != 0 and mean_rev_speed != np.inf:
+            half_life = np.log(2) / mean_rev_speed
+            self._ema_vol.update_half_life(half_life)
 
+        self._ema_vol.add_sample(price)
         self._trading_intensity.add_sample(snapshot, trade_tuple)
-        # self.logger().info(f"average_sold_qty:{self._trading_intensity.average_sold_qty}"
-        #                    f"average_bought_qty: {self._trading_intensity.average_bought_qty}")
+
         # Calculate adjustment factor to have 0.01% of inventory resolution
         base_balance = market.get_balance(base_asset)
         quote_balance = market.get_balance(quote_asset)
@@ -765,50 +804,16 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         q = (market.get_balance(self.base_asset) - q_target)
         # Volatility has to be in absolute values (prices) because in calculation of reservation price it's not multiplied by the current price, therefore
         # it can't be a percentage. The result of the multiplication has to be an absolute price value because it's being subtracted from the current price
-        vol = Decimal(self._avg_vol.current_value)
-        drift = Decimal(self.avg_drift.current_value)
-        # mid_price_variance = vol ** 2
-        # self.logger().info(f"drift={drift}; vol={vol}")
+        vol = Decimal(self.ema_vol.current_value)
+        drift = Decimal(self._avg_drift.current_value)
+        fee_rate = market.c_get_fee(self.base_asset, self.quote_asset,
+                               OrderType.LIMIT, TradeType.BUY, Decimal(1), price)
+        fee = Decimal(fee_rate.percent)
 
+        market_impact = Decimal(self._trading_intensity.avg_impact)
         # order book liquidity - kappa and alpha have to represent absolute values because the second member of the optimal spread equation has to be an absolute price
         # and from the reservation price calculation we know that gamma's unit is not absolute price
         if all((self._gamma, self._kappa)) and self._alpha != 0 and self._kappa > 0 and vol != 0:
-            if self._execution_state.time_left is not None and self._execution_state.closing_time is not None:
-                # Avellaneda-Stoikov for a fixed timespan
-                time_left_fraction = Decimal(str(self._execution_state.time_left / self._execution_state.closing_time))
-            else:
-                # Avellaneda-Stoikov for an infinite timespan
-                # The equations in the paper for this contain a few mistakes
-                # - the units don't align with the rest of the paper
-                # - volatility cancells itself out completely
-                # - the risk factor gets partially cancelled
-                # The proposed solution is to use the same equation as for the constrained timespan but with
-                # a fixed time left
-                time_left_fraction = 1
-
-            # self._reservation_price = price - (q * self._gamma * vol * time_left_fraction)
-            #
-            # self._optimal_spread = self._gamma * vol * time_left_fraction
-            # self._optimal_spread += 2 * Decimal(1 + self._gamma / self._kappa).ln() / self._gamma
-            #
-            # min_spread = price / 100 * Decimal(str(self._min_spread))
-            #
-            # max_limit_bid = price - min_spread / 2
-            # min_limit_ask = price + min_spread / 2
-            #
-            # self._optimal_ask = max(self._reservation_price + self._optimal_spread / 2, min_limit_ask)
-            # self._optimal_bid = min(self._reservation_price - self._optimal_spread / 2, max_limit_bid)
-            #
-            # # This is not what the algorithm will use as proposed bid and ask. This is just the raw output.
-            # # Optimal bid and optimal ask prices will be used
-            # if self._is_debug:
-            #     self.logger().info(f"q={q:.4f} | "
-            #                        f"vol={vol:.10f}")
-            #     self.logger().info(f"mid_price={price:.10f} | "
-            #                        f"reservation_price={self._reservation_price:.10f} | "
-            #                        f"optimal_spread={self._optimal_spread:.10f}")
-            #     self.logger().info(f"optimal_bid={(price-(self._reservation_price - self._optimal_spread / 2)) / price * 100:.4f}% | "
-            #                        f"optimal_ask={((self._reservation_price + self._optimal_spread / 2) - price) / price * 100:.4f}%")
             min_spread = Decimal(price) / 100 * Decimal(str(self._min_spread))
             max_limit_bid = Decimal(price) - min_spread / 2
             min_limit_ask = Decimal(price) + min_spread / 2
@@ -819,11 +824,17 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
             temp = Decimal((vol ** 2) * self._gamma / (2 * self._kappa * self._alpha))
             temp *= Decimal((1 + self._gamma / self._kappa) ** (1 + self._kappa / self._gamma))
 
-            ask_spread = Decimal(1 + self._gamma / self._kappa).ln() / self.gamma
-            ask_spread += (Decimal(drift / (self.gamma * vol **2)) - Decimal(((2 * q - 1) / 2)) * temp.sqrt())
+            ask_spread = Decimal(1 + self._gamma * (1 - fee) / self._kappa).ln() / (self.gamma * (1 - fee)) + (market_impact / 2)
+            # ask_spread += (Decimal(drift / (self.gamma * (vol **2))) - Decimal(((2 * q - 1) / 2)) * np.exp(self._kappa * market_impact / 4) * temp.sqrt())
+            ask_spread -=  Decimal(((2 * q - 1) / (2 * (1 - fee)))) * np.exp(self._kappa * market_impact / 4) * temp.sqrt()
+            ask_spread += fee * Decimal(price) / ( 1 - fee)
 
-            bid_spread = Decimal(1 + self._gamma / self._kappa).ln() / self._gamma
-            bid_spread += (Decimal(-drift / (self.gamma * vol **2)) + Decimal(((2 * q + 1) / 2)) * temp.sqrt())
+            bid_spread = Decimal(1 + self._gamma * (1 + fee) / self._kappa).ln() / (self.gamma * (1 + fee)) + (market_impact / 2)
+            # bid_spread += (Decimal(-drift / (self.gamma * (vol **2))) + Decimal(((2 * q + 1) / 2)) * np.exp(self._kappa * market_impact / 4) * temp.sqrt())
+            bid_spread += Decimal(((2 * q + 1) / (2 * (1 + fee)))) * np.exp(self._kappa * market_impact / 4) * temp.sqrt()
+            bid_spread += fee * Decimal(price) / ( 1 + fee)
+            self.logger().info(f"bid_spread={bid_spread:.6f} | "
+                               f"ask_spread={ask_spread:.6f}")
 
             ra = Decimal(price) + ask_spread
             rb = Decimal(price) - bid_spread
@@ -844,8 +855,8 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                 self.logger().info(f"mid_price={price:.10f} | "
                                    f"reservation_price={self._reservation_price:.10f} | "
                                    f"optimal_spread={self._optimal_spread:.10f}")
-                self.logger().info(f"optimal_bid={self._optimal_bid :.4f}% | "
-                                   f"optimal_ask={self._optimal_ask :.4f}%")
+                self.logger().info(f"optimal_bid={self._optimal_bid :.4f} | "
+                                   f"optimal_ask={self._optimal_ask :.4f}")
 
     def calculate_reservation_price_and_optimal_spread(self):
         return self.c_calculate_reservation_price_and_optimal_spread()
@@ -1410,14 +1421,14 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         if self._hb_app_notification:
             super().notify_hb_app(msg)
 
-    def dump_debug_variables(self):
+    def dump_debug_variables(self, timestamp):
         market = self._market_info.market
         mid_price = self.get_price()
         spread = Decimal(str(self.c_get_spread()))
 
-        best_ask = mid_price + spread / 2
+        best_ask = Decimal(mid_price) + spread / 2
         new_ask = self._reservation_price + self._optimal_spread / 2
-        best_bid = mid_price - spread / 2
+        best_bid = Decimal(mid_price) - spread / 2
         new_bid = self._reservation_price - self._optimal_spread / 2
 
         vol = self.get_volatility()
@@ -1427,7 +1438,8 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         last_trade_type = self._market_info.order_book.last_trade_type
 
         if not os.path.exists(self._debug_csv_path):
-            df_header = pd.DataFrame([('mid_price',
+            df_header = pd.DataFrame([('time',
+                                       'mid_price',
                                        'best_bid',
                                        'best_ask',
                                        'reservation_price',
@@ -1450,14 +1462,26 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                                        'inventory_target_pct',
                                        'last_trade_price',
                                        'last_trade_time',
-                                       'last_trade_type')])
-            df_header.to_csv(self._debug_csv_path, mode='a', header=False, index=False)
+                                       'last_trade_type',
+                                       'ema_vol',
+                                       'price_change',
+                                       'log_size',
+                                       'drift',
+                                       'median_impact',
+                                       'avg_impact',
+                                       'avg_bid_ask_spread')])
+            df_header.to_csv(self._debug_csv_path, mode='a', header=False, index=False, sep=';')
 
         if self._execution_state.time_left is not None and self._execution_state.closing_time is not None:
             time_left_fraction = self._execution_state.time_left / self._execution_state.closing_time
         else:
             time_left_fraction = None
-        df = pd.DataFrame([(mid_price,
+
+        price_change = self._trading_intensity.price_changes[-1]
+        order_size = self._trading_intensity.order_sizes[-1]
+        # t = pd.to_datetime(timestamp, unit='ms')
+        df = pd.DataFrame([(timestamp,
+                            mid_price,
                             best_bid,
                             best_ask,
                             self._reservation_price,
@@ -1480,5 +1504,12 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                             self.inventory_target_base_pct,
                             last_trade_price,
                             last_trade_time,
-                            last_trade_type)])
-        df.to_csv(self._debug_csv_path, mode='a', header=False, index=False)
+                            last_trade_type,
+                            self.ema_vol.current_value,
+                            price_change,
+                            order_size,
+                            self.avg_drift.current_value * self.order_refresh_time,
+                            self._trading_intensity.median_price_impact,
+                            self._trading_intensity.avg_impact,
+                            self._trading_intensity.avg_bid_ask_spread)])
+        df.to_csv(self._debug_csv_path, mode='a', header=False, index=False, sep=';')

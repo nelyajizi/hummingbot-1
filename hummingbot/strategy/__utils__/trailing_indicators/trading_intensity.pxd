@@ -23,12 +23,18 @@ cdef class TradingIntensityIndicator():
         double _nb_sells
         double _nb_buys
         # double lambda_2
-        object lambda_spread
+        # object lambda_spread
+        object count_spread
         list spread_levels
         double _old_kappa
         double _old_alpha
         int _order_refresh_time
         double initial_time
+        list _price_changes
+        list _order_sizes
+        double _median_price_impact
+        double _avg_impact
+        list _bid_ask_spread
         # list mids
 
 

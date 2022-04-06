@@ -24,6 +24,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         bint _hb_app_notification
         bint _is_debug
 
+
         double _cancel_timestamp
         double _create_timestamp
         object _limit_order_type
@@ -59,6 +60,10 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         object _avg_drift
         object _trading_intensity
         bint _should_wait_order_cancel_confirmation
+        # object _ema_price
+        # object _ema_diff
+        object _ema_vol
+        object _ouprocess
 
     cdef object c_get_mid_price(self)
     cdef object c_get_order_book_snapshot(self)
