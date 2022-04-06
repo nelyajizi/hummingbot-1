@@ -201,8 +201,8 @@ cdef class TradingIntensityIndicator():
         if len(self._trades) > self._sampling_length:
             initial_time = self._trades[0]['time']
             self._trades = self._trades[1:]
-            self.logger().info("set initial time")
-            self.logger().info(f"t0={initial_time}")
+            # self.logger().info("set initial time")
+            # self.logger().info(f"t0={initial_time}")
 
     def _estimate_intensity(self):
         self.c_estimate_intensity()
@@ -282,7 +282,7 @@ cdef class TradingIntensityIndicator():
             premier_trade_du_buffer = list(self._trades)[0]
             dernier_trade_du_buffer = list(self._trades)[-1]
             nombre_de_periode_dt=int((dernier_trade_du_buffer['time']-premier_trade_du_buffer['time'])/self._order_refresh_time)
-            self.logger().info(f"nombre de delta_t: {nombre_de_periode_dt}")
+            # self.logger().info(f"nombre de delta_t: {nombre_de_periode_dt}")
             if nombre_de_periode_dt==0:
                 self.logger().info(f"Attention : Le trading_buffer n'est pas suffisamment grand au regard de l'order_refresh")
                 nombre_de_periode_dt=1
@@ -328,12 +328,12 @@ cdef class TradingIntensityIndicator():
 
             self._alpha = Decimal(median_volume * intensity_a)
             self._kappa = Decimal(kappa)
-            self.logger().info(f"intensite : {intensity_a}")
-            self.logger().info(f"alpha: {self._alpha}")
-            self.logger().info(f"kappa: {self._kappa}")
-            self.logger().info(f"R_2: {r_2}")
+            # self.logger().info(f"intensite : {intensity_a}")
+            # self.logger().info(f"alpha: {self._alpha}")
+            # self.logger().info(f"kappa: {self._kappa}")
+            # self.logger().info(f"R_2: {r_2}")
 
-            self.logger().info(f"######## Market Impact #######")
+            # self.logger().info(f"######## Market Impact #######")
             self._median_price_impact = np.median(self._price_changes)
             self._avg_impact = np.mean(self._price_changes)
             self.logger().info(f"median_price_impact: {self._median_price_impact} ")
@@ -353,7 +353,7 @@ cdef class TradingIntensityIndicator():
             # self.logger().info(f"coeff: {coeff}")
             # self.logger().info(f"cst: {cst}")
             # self.logger().info(f"r_2: {r_2}")
-            self.logger().info(f"######## End Market Impact #######")
+            # self.logger().info(f"######## End Market Impact #######")
             #########
             #self.logger().info(f"spread: {spread_levels}")
             #self.logger().info(f"lambda_spread: {lambda_spread}")

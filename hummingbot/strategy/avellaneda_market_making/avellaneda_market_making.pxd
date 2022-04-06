@@ -60,8 +60,8 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         object _avg_drift
         object _trading_intensity
         bint _should_wait_order_cancel_confirmation
-        object _ema_price
-        object _ema_diff
+        # object _ema_price
+        # object _ema_diff
         object _ema_vol
         object _ouprocess
 

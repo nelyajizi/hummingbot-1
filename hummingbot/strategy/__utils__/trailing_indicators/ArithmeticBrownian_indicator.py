@@ -34,15 +34,23 @@ class DriftAB_Indicator(BaseTrailingIndicator):
 
     def _indicator_calculation(self) -> float:
         np_sampling_buffer = self._sampling_buffer.get_as_numpy_array()
-        if np_sampling_buffer.size <= 1:
-            drift=0
-        else :
+        if np_sampling_buffer.size < 1:
+            drift = 0
+        else:
+            np_sampling_buffer =np_sampling_buffer[-10:]
             ###### moyenne pondérée
-            w = np.arange(1,(np.diff(np_sampling_buffer)).size+1,1,dtype=int)
+            # w = np.arange(1,(np.diff(np_sampling_buffer)).size+1, 1, dtype=int)
             ###### moyenne non pondérée
             # w = np.ones((np.diff(np_sampling_buffer)).size)
             ######
-            drift = np.average(np.diff(np_sampling_buffer) , weights=w) / np.sum(w)
+            diff = np.diff(np_sampling_buffer)
+            # a = 0
+            # for d in diff:
+            #     a += d
+            # b = a/len(diff)
+            # drift = np.average(np.diff(np_sampling_buffer), weights=w) / np.sum(w)
+            drift = np.average(diff)
+            # error = drift - b
         return drift
 
     def _processing_calculation(self) -> float:
