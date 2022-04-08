@@ -130,7 +130,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         self.c_add_markets([market_info.market])
         self._ticks_to_be_ready = max(volatility_buffer_size, trading_intensity_buffer_size)
         self._avg_vol = InstantVolatilityIndicator(sampling_length=volatility_buffer_size, processing_length=int(order_refresh_time))
-        self._avg_drift = DriftAB_Indicator(sampling_length=volatility_buffer_size, processing_length=int(order_refresh_time))
+        self._avg_drift = DriftAB_Indicator(sampling_length=int(order_refresh_time), processing_length=int(order_refresh_time))
         # self._ema_price = EMAIndicator(sampling_length=volatility_buffer_size,
         #                               underlying_type="price")
         # self._ema_diff = EMAIndicator(sampling_length=volatility_buffer_size,
