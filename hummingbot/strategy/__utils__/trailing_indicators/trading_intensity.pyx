@@ -3,21 +3,17 @@ import math
 
 import time
 from decimal import Decimal
-# from math import floor, ceil
 import numpy as np
 import pandas as pd
-from scipy.optimize import curve_fit
 from scipy.optimize import OptimizeWarning
-from typing import (
-    Tuple,
-)
-import warnings
-
+from typing import Tuple
 from sklearn import linear_model
+from hummingbot.core.event.events import TradeType
+
+import warnings
 
 intensity_logger = None
 
-from hummingbot.core.event.events import TradeType
 
 cdef class TradingIntensityIndicator():
     @classmethod
@@ -54,13 +50,17 @@ cdef class TradingIntensityIndicator():
         # self.spread_levels = []
         self._order_refresh_time = order_refresh_time
         self.initial_time = time.time()
+        self._abs_price_changes = []
         self._price_changes = []
-        self._order_sizes = []
+        self._net_volume = []
         self._median_price_impact = np.nan
         self._avg_impact = np.nan
         self._bid_ask_spread = []
+        self._lambda_coef = np.nan
+        self._lambda_intercept = np.nan
+        self._order_imbalance = np.nan
 
-        warnings.simplefilter("ignore", OptimizeWarning)
+    warnings.simplefilter("ignore", OptimizeWarning)
 
     def _simulate_execution(self, bids_df, asks_df):
         self.c_simulate_execution(bids_df, asks_df)
@@ -92,11 +92,8 @@ cdef class TradingIntensityIndicator():
                 (self._last_inserted_trade_price == self._last_price) and\
                 (self._last_price_amount == self._last_inserted_trade_amount) and\
                 (self._last_price_type == self._last_inserted_trade_type):
-            # self.logger().info("no trade to register")
             return
 
-        # if self._last_inserted_trade_time == 0:
-        #     self._last_inserted_trade_time = self._last_price_time
 
         bid = bids_df["price"].iloc[0]
         ask = asks_df["price"].iloc[0]
@@ -110,25 +107,22 @@ cdef class TradingIntensityIndicator():
 
         diff = price - price_prev
         if diff != 0:
+            prev_bid_vol = _bids_df["amount"].iloc[0]
+            prev_ask_vol = _asks_df["amount"].iloc[0]
             if self._last_price_type == TradeType.BUY:
                 epsilon = 1
             else:
                 epsilon = -1
-            # self.logger().info(f"epsilon: {epsilon}, deal_type:{self._last_price_type} diff={diff} ")
-            self._price_changes += [np.abs(diff)]
-            self._order_sizes += [self._last_price_amount]
+            self._abs_price_changes += [np.abs(diff)]
+            self._price_changes += [diff]
+            self._net_volume += [prev_ask_vol - prev_bid_vol]
+
         # divide by tick_size ?
         spread = self._last_price - price_prev
         # rounding
         spread = round(abs(int(round(spread  / delta_spread, 0)) * delta_spread),4)
-        # self.logger().info(f"spread:{spread}")
 
-        # real_trades = []
         if self._last_price_type == TradeType.BUY:
-            # self.logger().info(f"last_price_time: {self._last_price_time} ")
-            # self.logger().info(f"_last_inserted_trade_time: {self._last_inserted_trade_time} ")
-            # self.lambda_2 += (self._last_price_time - self._last_inserted_trade_time) / self._order_refresh_time
-            # self.logger().info(f"lambda 2: {self.lambda_2} ")
             self._nb_buys += 1
             if self._nb_buys == 1:
                 self._average_bought_qty = self._last_price_amount
@@ -145,12 +139,6 @@ cdef class TradingIntensityIndicator():
                 # aggressive limit order, do nothing
                 return
             elif self._last_price >= ask_prev:
-                # we don't differentiate the buy from the sell side unfortunately
-                # if spread not in self.spread_levels:
-                #     self.spread_levels += [spread]
-                #     self.lambda_spread[spread] = 1
-                # else:
-                #     self.lambda_spread[spread] += 1
                 self._trades += [{'price_level': spread, 'amount': self._last_price_amount, 'type': 'BUY',
                                  'time': self._last_price_time}]
                 self._last_inserted_trade_time = self._last_price_time
@@ -158,11 +146,6 @@ cdef class TradingIntensityIndicator():
                 self._last_inserted_trade_type = self._last_price_type
                 self._last_inserted_trade_amount = self._last_price_amount
         elif self._last_price_type == TradeType.SELL:
-            # self.logger().info(f"last_price_time: {self._last_price_time} ")
-            # self.logger().info(f"_last_inserted_trade_time: {self._last_inserted_trade_time} ")
-            # self.lambda_2 += (self._last_price_time - self._last_inserted_trade_time) / self._order_refresh_time
-            # self.logger().info(f"lambda 2: {self.lambda_2}")
-            # average sell quantity:
             self._nb_sells += 1
             if self._nb_sells == 1:
                 self._average_sold_qty = self._last_price_amount
@@ -180,13 +163,7 @@ cdef class TradingIntensityIndicator():
                 return
             elif self._last_price <= bid_prev:
                 # market order
-                # if spread not in self.spread_levels:
-                #     self.spread_levels += [spread]
-                #     self.lambda_spread[spread] = 1
-                # else:
-                #     self.lambda_spread[spread] += 1
                 self._trades += [{'price_level': spread, 'amount': self._last_price_amount, 'type': 'SELL', 'time': self._last_price_time}]
-
                 self._last_inserted_trade_time = self._last_price_time
                 self._last_inserted_trade_price = self._last_price
                 self._last_inserted_trade_type = self._last_price_type
@@ -197,12 +174,9 @@ cdef class TradingIntensityIndicator():
         self.logger().info(f"nb buys: {self._nb_buys}"
                            f"nb sells: {self._nb_sells}")
 
-        self.logger().info(f"len trade: {len(self._trades)}")
         if len(self._trades) > self._sampling_length:
             initial_time = self._trades[0]['time']
             self._trades = self._trades[1:]
-            # self.logger().info("set initial time")
-            # self.logger().info(f"t0={initial_time}")
 
     def _estimate_intensity(self):
         self.c_estimate_intensity()
@@ -213,7 +187,6 @@ cdef class TradingIntensityIndicator():
             list lambdas
             list price_levels
 
-        # Fit the probability density function; reuse previously calculated parameters as initial values
         try:
             self.logger().info("c_estimate_intensity....")
             #last_trade_time = self.initial_time
@@ -287,6 +260,7 @@ cdef class TradingIntensityIndicator():
                 self.logger().info(f"Attention : Le trading_buffer n'est pas suffisamment grand au regard de l'order_refresh")
                 nombre_de_periode_dt=1
 
+            order_imb = 0
             for trade in self._trades:
                 duree = (trade['time'] - premier_trade_du_buffer['time'])
                 i = int(duree/self._order_refresh_time)
@@ -297,7 +271,10 @@ cdef class TradingIntensityIndicator():
                     else:
                         count_spread[trade['price_level']] += 1
                 trade_amount += [trade['amount']]
+                trade_sign = 1 if trade['type'] == 'BUY' else -1
+                order_imb += trade_sign * trade['amount']
 
+            self._order_imbalance = order_imb
             avg_volume= np.mean(trade_amount)
             median_volume= np.median(trade_amount)
             self.logger().info(f"median_volume: {median_volume}\n "
@@ -311,8 +288,8 @@ cdef class TradingIntensityIndicator():
                     if spread_j <= spread_k:
                         real_count_spread[spread_j] += count_spread[spread_k]
 
-            count_emp = [np.log(real_count_spread[spread] / nombre_de_periode_dt) for
-                               spread in spread_levels]
+            count_emp = [np.log((real_count_spread[spread] / nombre_de_periode_dt) / self._order_refresh_time) for
+                         spread in spread_levels]
             count_emp = pd.DataFrame(count_emp)
             spread_levels = pd.DataFrame(spread_levels)
             spread_levels = spread_levels.values.reshape(len(spread_levels), 1)
@@ -323,44 +300,26 @@ cdef class TradingIntensityIndicator():
             r_2=lin_reg_model.score(spread_levels, count_emp)
             kappa = -lin_reg_model.coef_.item()
             intensity_a = math.exp(lin_reg_model.intercept_)
-            # average_volume = (self._average_bought_qty + self._average_sold_qty ) / 2
             ############ FIN DU NOUVEAU CALCUL D'INTENSITE
 
             self._alpha = Decimal(median_volume * intensity_a)
             self._kappa = Decimal(kappa)
-            # self.logger().info(f"intensite : {intensity_a}")
-            # self.logger().info(f"alpha: {self._alpha}")
-            # self.logger().info(f"kappa: {self._kappa}")
-            # self.logger().info(f"R_2: {r_2}")
 
-            # self.logger().info(f"######## Market Impact #######")
-            self._median_price_impact = np.median(self._price_changes)
-            self._avg_impact = np.mean(self._price_changes)
-            self.logger().info(f"median_price_impact: {self._median_price_impact} ")
-            self.logger().info(f"avg_impact: {self._avg_impact} ")
+            self._median_price_impact = np.median(self._abs_price_changes)
+            self._avg_impact = np.mean(self._abs_price_changes)
 
-            # log_sizes = pd.DataFrame(self.log_sizes)
-            # price_changes = pd.DataFrame(self.price_changes)
-            # log_sizes = log_sizes.values.reshape(len(log_sizes), 1)
-            # price_changes = (price_changes.values.reshape(len(price_changes), 1)).squeeze()
-            #
-            # lin_reg_model = linear_model.LinearRegression()
-            # lin_reg_model.fit(log_sizes, price_changes)
-            # r_2 = lin_reg_model.score(spread_levels, count_emp)
-            # cst = lin_reg_model.coef_.item()
-            # coeff = lin_reg_model.intercept_
-
-            # self.logger().info(f"coeff: {coeff}")
-            # self.logger().info(f"cst: {cst}")
-            # self.logger().info(f"r_2: {r_2}")
-            # self.logger().info(f"######## End Market Impact #######")
-            #########
-            #self.logger().info(f"spread: {spread_levels}")
-            #self.logger().info(f"lambda_spread: {lambda_spread}")
-            #self.logger().info(f"real_lambda_spread: {real_lambda_spread}")
-            #self.logger().info(f"lambda_2: {lambda_2}")
-            #self.logger().info(f"Intensité: {lambda_emp}")
-            #########
+            self.logger().info(f"calculating Kyle's lambda:")
+            if len(self.price_changes) > 3:
+                price_changes = pd.DataFrame(self._price_changes)
+                order_imb = pd.DataFrame(self._net_volume)
+                order_imb = order_imb.values.reshape(len(order_imb), 1)
+                price_changes = price_changes.values.reshape(len(price_changes), 1)
+                reg_model = linear_model.LinearRegression()
+                reg_model.fit(order_imb, price_changes)
+                self._lambda_coef = lin_reg_model.coef_.item()
+                self._lambda_intercept = lin_reg_model.intercept_
+                self.logger().info(f"coef: {self._lambda_coef}")
+                self.logger().info(f"intercept: {self._lambda_intercept}")
 
         except (RuntimeError, ValueError) as e:
             pass
@@ -387,9 +346,6 @@ cdef class TradingIntensityIndicator():
         # Store the orderbook
         self._bids_df = bids_df
         self._asks_df = asks_df
-
-        # price = (bids_df["price"].iloc[0] + asks_df["price"].iloc[0]) / 2
-        # self.mids.append(price)
 
 
 
@@ -420,8 +376,8 @@ cdef class TradingIntensityIndicator():
         return self._average_sold_qty
 
     @property
-    def order_sizes(self) -> list:
-        return self._order_sizes
+    def net_volume(self) -> list:
+        return self._net_volume
 
     @property
     def price_changes(self) -> list:
@@ -442,3 +398,16 @@ cdef class TradingIntensityIndicator():
     @property
     def avg_bid_ask_spread(self):
         return np.average(self._bid_ask_spread)
+
+    @property
+    def lambda_coef(self):
+        return self._lambda_coef
+
+    @property
+    def lambda_intercept(self):
+        return self._lambda_intercept
+
+    @property
+    def order_imbalance(self):
+        return self._order_imbalance
+
