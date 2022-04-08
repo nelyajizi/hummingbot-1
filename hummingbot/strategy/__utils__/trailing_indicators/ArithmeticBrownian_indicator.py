@@ -37,7 +37,6 @@ class DriftAB_Indicator(BaseTrailingIndicator):
         if np_sampling_buffer.size < 1:
             drift = 0
         else:
-            np_sampling_buffer =np_sampling_buffer[-10:]
             ###### moyenne pondérée
             # w = np.arange(1,(np.diff(np_sampling_buffer)).size+1, 1, dtype=int)
             ###### moyenne non pondérée

@@ -130,7 +130,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         self.c_add_markets([market_info.market])
         self._ticks_to_be_ready = max(volatility_buffer_size, trading_intensity_buffer_size)
         self._avg_vol = InstantVolatilityIndicator(sampling_length=volatility_buffer_size, processing_length=int(order_refresh_time))
-        self._avg_drift = DriftAB_Indicator(sampling_length=volatility_buffer_size, processing_length=int(order_refresh_time))
+        self._avg_drift = DriftAB_Indicator(sampling_length=int(order_refresh_time), processing_length=int(order_refresh_time))
         # self._ema_price = EMAIndicator(sampling_length=volatility_buffer_size,
         #                               underlying_type="price")
         # self._ema_diff = EMAIndicator(sampling_length=volatility_buffer_size,
@@ -804,12 +804,13 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         q = (market.get_balance(self.base_asset) - q_target)
         # Volatility has to be in absolute values (prices) because in calculation of reservation price it's not multiplied by the current price, therefore
         # it can't be a percentage. The result of the multiplication has to be an absolute price value because it's being subtracted from the current price
-        vol = Decimal(self.ema_vol.current_value)
+        # vol = Decimal(self.ema_vol.current_value)
+        vol = Decimal(self.avg_vol.current_value)
         drift = Decimal(self._avg_drift.current_value)
         fee_rate = market.c_get_fee(self.base_asset, self.quote_asset,
                                OrderType.LIMIT, TradeType.BUY, Decimal(1), price)
-        fee = Decimal(fee_rate.percent)
 
+        fee = Decimal(fee_rate.percent)
         market_impact = Decimal(self._trading_intensity.avg_impact)
         # order book liquidity - kappa and alpha have to represent absolute values because the second member of the optimal spread equation has to be an absolute price
         # and from the reservation price calculation we know that gamma's unit is not absolute price
@@ -825,13 +826,13 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
             temp *= Decimal((1 + self._gamma / self._kappa) ** (1 + self._kappa / self._gamma))
 
             ask_spread = Decimal(1 + self._gamma * (1 - fee) / self._kappa).ln() / (self.gamma * (1 - fee)) + (market_impact / 2)
-            # ask_spread += (Decimal(drift / (self.gamma * (vol **2))) - Decimal(((2 * q - 1) / 2)) * np.exp(self._kappa * market_impact / 4) * temp.sqrt())
-            ask_spread -=  Decimal(((2 * q - 1) / (2 * (1 - fee)))) * np.exp(self._kappa * market_impact / 4) * temp.sqrt()
+            ask_drift_component = Decimal(drift / ((vol ** 2) * self.gamma * (1 - fee)))
+            ask_spread +=  Decimal(ask_drift_component - (2 * q - 1) / (2 * (1 - fee))) * np.exp(self._kappa * market_impact / 4) * temp.sqrt()
             ask_spread += fee * Decimal(price) / ( 1 - fee)
 
             bid_spread = Decimal(1 + self._gamma * (1 + fee) / self._kappa).ln() / (self.gamma * (1 + fee)) + (market_impact / 2)
-            # bid_spread += (Decimal(-drift / (self.gamma * (vol **2))) + Decimal(((2 * q + 1) / 2)) * np.exp(self._kappa * market_impact / 4) * temp.sqrt())
-            bid_spread += Decimal(((2 * q + 1) / (2 * (1 + fee)))) * np.exp(self._kappa * market_impact / 4) * temp.sqrt()
+            bid_drift_component = Decimal(-drift / ((vol ** 2) * self.gamma * (1 + fee)))
+            bid_spread += Decimal(bid_drift_component + ((2 * q + 1) / (2 * (1 + fee)))) * np.exp(self._kappa * market_impact / 4) * temp.sqrt()
             bid_spread += fee * Decimal(price) / ( 1 + fee)
             self.logger().info(f"bid_spread={bid_spread:.6f} | "
                                f"ask_spread={ask_spread:.6f}")
@@ -1465,11 +1466,14 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                                        'last_trade_type',
                                        'ema_vol',
                                        'price_change',
-                                       'log_size',
+                                       'imbalance',
                                        'drift',
                                        'median_impact',
                                        'avg_impact',
-                                       'avg_bid_ask_spread')])
+                                       'avg_bid_ask_spread',
+                                       'lambda_coef',
+                                       'lambda_intercept',
+                                       'order_imbalance')])
             df_header.to_csv(self._debug_csv_path, mode='a', header=False, index=False, sep=';')
 
         if self._execution_state.time_left is not None and self._execution_state.closing_time is not None:
@@ -1478,9 +1482,9 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
             time_left_fraction = None
 
         price_change = self._trading_intensity.price_changes[-1]
-        order_size = self._trading_intensity.order_sizes[-1]
-        # t = pd.to_datetime(timestamp, unit='ms')
-        df = pd.DataFrame([(timestamp,
+        order_imbalance = self._trading_intensity.net_volume[-1]
+        t = pd.to_datetime(timestamp)
+        df = pd.DataFrame([(t,
                             mid_price,
                             best_bid,
                             best_ask,
@@ -1507,9 +1511,13 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                             last_trade_type,
                             self.ema_vol.current_value,
                             price_change,
-                            order_size,
+                            order_imbalance,
                             self.avg_drift.current_value * self.order_refresh_time,
                             self._trading_intensity.median_price_impact,
                             self._trading_intensity.avg_impact,
-                            self._trading_intensity.avg_bid_ask_spread)])
+                            self._trading_intensity.avg_bid_ask_spread,
+                            self._trading_intensity.lambda_coef,
+                            self._trading_intensity.lambda_intercept,
+                            self._trading_intensity.order_imbalance)])
+
         df.to_csv(self._debug_csv_path, mode='a', header=False, index=False, sep=';')
