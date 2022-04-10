@@ -39,6 +39,7 @@ cdef class TradingIntensityIndicator():
         double _lambda_coef
         double _lambda_intercept
         double _order_imbalance
+        double _delta_spread
 
 
     cdef c_simulate_execution(self, bids_df, asks_df)

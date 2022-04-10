@@ -100,7 +100,7 @@ avellaneda_market_making_config_map = {
                   prompt="Choose execution timeframe ( infinite / from_date_to_date / daily_between_times ) >>> ",
                   validator=validate_execution_timeframe,
                   on_validated=on_validated_execution_timeframe,
-                  prompt_on_new=True),
+                  default="infinite"),
     "start_time":
         ConfigVar(key="start_time",
                   prompt=execution_time_start_prompt,
@@ -141,7 +141,8 @@ avellaneda_market_making_config_map = {
                   prompt="Enter order amount shape factor (\u03B7) >>> ",
                   type_str="decimal",
                   default=Decimal("0"),
-                  validator=lambda v: validate_decimal(v, 0, 1, inclusive=True)),
+                  validator=lambda v: validate_decimal(v, 0, 1, inclusive=True),
+                  prompt_on_new=True),
     "min_spread":
         ConfigVar(key="min_spread",
                   prompt="Enter minimum spread limit (as % of mid price) >>> ",
@@ -240,5 +241,17 @@ avellaneda_market_making_config_map = {
                          "(Not waiting requires enough available balance) (Yes/No) >>> ",
                   type_str="bool",
                   default=True,
+                  validator=validate_bool),
+    "tick_size":
+        ConfigVar(key="tick_size",
+                  prompt="Enter the tick size >>> ",
+                  type_str="decimal",
+                  validator=lambda v: validate_decimal(v, Decimal(0), inclusive=True),
+                  default=Decimal("0.001")),
+    "estimate_drift":
+        ConfigVar(key="estimate_drift",
+                  prompt="Do you want to enable drift estimate? (Yes/No) >>> ",
+                  type_str="bool",
+                  default=False,
                   validator=validate_bool),
 }

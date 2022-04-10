@@ -97,6 +97,8 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                     trading_intensity_price_levels: Tuple[float] = tuple(np.geomspace(1, 2, 10) - 1),
                     should_wait_order_cancel_confirmation = True,
                     is_debug: bool = True,
+                    tick_size: float = 0.001,
+                    estimate_drift: bool = False,
                     ):
         self._sb_order_tracker = OrderTracker()
         self._market_info = market_info
@@ -129,8 +131,10 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
 
         self.c_add_markets([market_info.market])
         self._ticks_to_be_ready = max(volatility_buffer_size, trading_intensity_buffer_size)
-        self._avg_vol = InstantVolatilityIndicator(sampling_length=volatility_buffer_size, processing_length=int(order_refresh_time))
-        self._avg_drift = DriftAB_Indicator(sampling_length=int(order_refresh_time), processing_length=int(order_refresh_time))
+        self._avg_vol = InstantVolatilityIndicator(sampling_length=volatility_buffer_size,
+                                                   processing_length=int(order_refresh_time))
+        self._avg_drift = DriftAB_Indicator(sampling_length=int(order_refresh_time),
+                                            processing_length=int(order_refresh_time))
         # self._ema_price = EMAIndicator(sampling_length=volatility_buffer_size,
         #                               underlying_type="price")
         # self._ema_diff = EMAIndicator(sampling_length=volatility_buffer_size,
@@ -138,7 +142,9 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         self._ema_vol = EMAIndicator(sampling_length=volatility_buffer_size,
                                      underlying_type="volatility")
         self._ouprocess = OUModelIndicator(sampling_length=volatility_buffer_size)
-        self._trading_intensity = TradingIntensityIndicator(order_refresh_time=order_refresh_time, sampling_length=trading_intensity_buffer_size)
+        self._trading_intensity = TradingIntensityIndicator(order_refresh_time=order_refresh_time,
+                                                            sampling_length=trading_intensity_buffer_size,
+                                                            delta_spread=tick_size)
         self._last_sampling_timestamp = 0
         self._alpha = None
         self._kappa = None
@@ -157,6 +163,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         self._should_wait_order_cancel_confirmation = should_wait_order_cancel_confirmation
         self._debug_csv_path = debug_csv_path
         self._is_debug = is_debug
+        self._estimate_drift = estimate_drift
         try:
             if self._is_debug:
                 os.unlink(self._debug_csv_path)
@@ -826,12 +833,17 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
             temp *= Decimal((1 + self._gamma / self._kappa) ** (1 + self._kappa / self._gamma))
 
             ask_spread = Decimal(1 + self._gamma * (1 - fee) / self._kappa).ln() / (self.gamma * (1 - fee)) + (market_impact / 2)
-            ask_drift_component = Decimal(drift / ((vol ** 2) * self.gamma * (1 - fee)))
+            ask_drift_component = s_decimal_zero
+            if self._estimate_drift:
+                ask_drift_component = Decimal(drift / ((vol ** 2) * self.gamma * (1 - fee)))
             ask_spread +=  Decimal(ask_drift_component - (2 * q - 1) / (2 * (1 - fee))) * np.exp(self._kappa * market_impact / 4) * temp.sqrt()
             ask_spread += fee * Decimal(price) / ( 1 - fee)
 
             bid_spread = Decimal(1 + self._gamma * (1 + fee) / self._kappa).ln() / (self.gamma * (1 + fee)) + (market_impact / 2)
-            bid_drift_component = Decimal(-drift / ((vol ** 2) * self.gamma * (1 + fee)))
+            bid_drift_component = s_decimal_zero
+            if self._estimate_drift:
+                bid_drift_component = Decimal(-drift / ((vol ** 2) * self.gamma * (1 + fee)))
+
             bid_spread += Decimal(bid_drift_component + ((2 * q + 1) / (2 * (1 + fee)))) * np.exp(self._kappa * market_impact / 4) * temp.sqrt()
             bid_spread += fee * Decimal(price) / ( 1 + fee)
             self.logger().info(f"bid_spread={bid_spread:.6f} | "

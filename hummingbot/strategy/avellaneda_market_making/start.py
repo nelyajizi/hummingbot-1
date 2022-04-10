@@ -68,6 +68,8 @@ def start(self):
             execution_state = RunAlwaysExecutionState()
 
         min_spread = c_map.get("min_spread").value
+        tick_size = c_map.get("tick_size").value
+        estimate_drift = c_map.get("estimate_drift").value
         volatility_buffer_size = c_map.get("volatility_buffer_size").value
         trading_intensity_buffer_size = c_map.get("trading_intensity_buffer_size").value
         should_wait_order_cancel_confirmation = c_map.get("should_wait_order_cancel_confirmation")
@@ -104,7 +106,9 @@ def start(self):
             volatility_buffer_size=volatility_buffer_size,
             trading_intensity_buffer_size=trading_intensity_buffer_size,
             should_wait_order_cancel_confirmation=should_wait_order_cancel_confirmation,
-            is_debug=True
+            is_debug=True,
+            tick_size=tick_size,
+            estimate_drift=estimate_drift
         )
     except Exception as e:
         self._notify(str(e))

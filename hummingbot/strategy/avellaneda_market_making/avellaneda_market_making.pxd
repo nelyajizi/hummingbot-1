@@ -64,6 +64,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         # object _ema_diff
         object _ema_vol
         object _ouprocess
+        bint _estimate_drift
 
     cdef object c_get_mid_price(self)
     cdef object c_get_order_book_snapshot(self)

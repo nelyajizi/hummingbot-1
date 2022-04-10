@@ -23,7 +23,7 @@ cdef class TradingIntensityIndicator():
             intensity_logger = logging.getLogger(__name__)
         return intensity_logger
 
-    def __init__(self, order_refresh_time = 1, sampling_length: int = 30):
+    def __init__(self, order_refresh_time = 1, sampling_length: int = 30, delta_spread=0.001):
         self._alpha = 0
         self._kappa = 0
         self._old_kappa = 0
@@ -59,6 +59,7 @@ cdef class TradingIntensityIndicator():
         self._lambda_coef = np.nan
         self._lambda_intercept = np.nan
         self._order_imbalance = np.nan
+        self._delta_spread = delta_spread
 
     warnings.simplefilter("ignore", OptimizeWarning)
 
@@ -79,7 +80,7 @@ cdef class TradingIntensityIndicator():
             object ask_prev
             object price_prev
             list trades
-            delta_spread = 0.001
+
 
         if self._last_price_time is np.nan:
             self.logger().info("_last_price_time is nan")
@@ -120,7 +121,7 @@ cdef class TradingIntensityIndicator():
         # divide by tick_size ?
         spread = self._last_price - price_prev
         # rounding
-        spread = round(abs(int(round(spread  / delta_spread, 0)) * delta_spread),4)
+        spread = round(abs(int(round(spread / self._delta_spread, 0)) * self._delta_spread),4)
 
         if self._last_price_type == TradeType.BUY:
             self._nb_buys += 1
@@ -308,18 +309,18 @@ cdef class TradingIntensityIndicator():
             self._median_price_impact = np.median(self._abs_price_changes)
             self._avg_impact = np.mean(self._abs_price_changes)
 
-            self.logger().info(f"calculating Kyle's lambda:")
-            if len(self.price_changes) > 3:
-                price_changes = pd.DataFrame(self._price_changes)
-                order_imb = pd.DataFrame(self._net_volume)
-                order_imb = order_imb.values.reshape(len(order_imb), 1)
-                price_changes = price_changes.values.reshape(len(price_changes), 1)
-                reg_model = linear_model.LinearRegression()
-                reg_model.fit(order_imb, price_changes)
-                self._lambda_coef = lin_reg_model.coef_.item()
-                self._lambda_intercept = lin_reg_model.intercept_
-                self.logger().info(f"coef: {self._lambda_coef}")
-                self.logger().info(f"intercept: {self._lambda_intercept}")
+            # self.logger().info(f"calculating Kyle's lambda:")
+            # if len(self.price_changes) > 3:
+            #     price_changes = pd.DataFrame(self._price_changes)
+            #     order_imb = pd.DataFrame(self._net_volume)
+            #     order_imb = order_imb.values.reshape(len(order_imb), 1)
+            #     price_changes = price_changes.values.reshape(len(price_changes), 1)
+            #     reg_model = linear_model.LinearRegression()
+            #     reg_model.fit(order_imb, price_changes)
+            #     self._lambda_coef = lin_reg_model.coef_.item()
+            #     self._lambda_intercept = lin_reg_model.intercept_
+            #     self.logger().info(f"coef: {self._lambda_coef}")
+            #     self.logger().info(f"intercept: {self._lambda_intercept}")
 
         except (RuntimeError, ValueError) as e:
             pass
