@@ -60,6 +60,7 @@ cdef class TradingIntensityIndicator():
         self._lambda_intercept = np.nan
         self._order_imbalance = np.nan
         self._delta_spread = delta_spread
+        self._r_2 = 0
 
     warnings.simplefilter("ignore", OptimizeWarning)
 
@@ -170,9 +171,9 @@ cdef class TradingIntensityIndicator():
                 self._last_inserted_trade_type = self._last_price_type
                 self._last_inserted_trade_amount = self._last_price_amount
 
-        self.logger().info(f"average buy volume: {self._average_bought_qty}"
-                           f"average_sell volume: {self._average_sold_qty}")
-        self.logger().info(f"nb buys: {self._nb_buys}"
+        self.logger().info(f"average buy volume: {self._average_bought_qty:.6f} | "
+                           f"average_sell volume: {self._average_sold_qty:.6f}")
+        self.logger().info(f"nb buys: {self._nb_buys} | "
                            f"nb sells: {self._nb_sells}")
 
         if len(self._trades) > self._sampling_length:
@@ -278,8 +279,8 @@ cdef class TradingIntensityIndicator():
             self._order_imbalance = order_imb
             avg_volume= np.mean(trade_amount)
             median_volume= np.median(trade_amount)
-            self.logger().info(f"median_volume: {median_volume}\n "
-                               f"avg_volume: {avg_volume}")
+            self.logger().info(f"median_volume: {median_volume:.6f} | "
+                               f"avg_volume: {avg_volume:.6f}")
 
             spread_levels.sort()
             real_count_spread = count_spread.copy()
@@ -305,9 +306,11 @@ cdef class TradingIntensityIndicator():
 
             self._alpha = Decimal(median_volume * intensity_a)
             self._kappa = Decimal(kappa)
-
-            self._median_price_impact = np.median(self._abs_price_changes)
-            self._avg_impact = np.mean(self._abs_price_changes)
+            self._r_2 = Decimal(r_2)
+            # 10 dernières valeurs
+            self._median_price_impact = np.median(self._abs_price_changes [len(self._abs_price_changes)-10:])
+            self._avg_impact = np.mean(self._abs_price_changes [len(self._abs_price_changes)-10:])
+            self.logger().info(f"avg_impact: {self._avg_impact:.6f}")
 
             # self.logger().info(f"calculating Kyle's lambda:")
             # if len(self.price_changes) > 3:
@@ -352,7 +355,7 @@ cdef class TradingIntensityIndicator():
 
     @property
     def current_value(self) -> Tuple[float, float]:
-        return self._alpha, self._kappa
+        return self._alpha, self._kappa, self._r_2
 
     @property
     def is_sampling_buffer_full(self) -> bool:

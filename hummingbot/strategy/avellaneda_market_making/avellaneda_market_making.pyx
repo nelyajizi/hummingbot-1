@@ -95,7 +95,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                     volatility_buffer_size: int = 200,
                     trading_intensity_buffer_size: int = 200,
                     trading_intensity_price_levels: Tuple[float] = tuple(np.geomspace(1, 2, 10) - 1),
-                    should_wait_order_cancel_confirmation = True,
+                    should_wait_order_cancel_confirmation = False,
                     is_debug: bool = True,
                     tick_size: float = 0.001,
                     estimate_drift: bool = False,
@@ -131,9 +131,9 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
 
         self.c_add_markets([market_info.market])
         self._ticks_to_be_ready = max(volatility_buffer_size, trading_intensity_buffer_size)
-        self._avg_vol = InstantVolatilityIndicator(sampling_length=volatility_buffer_size,
+        self._avg_vol = VolatilityAB_Indicator(sampling_length=volatility_buffer_size,
                                                    processing_length=int(order_refresh_time))
-        self._avg_drift = DriftAB_Indicator(sampling_length=int(order_refresh_time),
+        self._avg_drift = DriftAB_Indicator(sampling_length=volatility_buffer_size,
                                             processing_length=int(order_refresh_time))
         # self._ema_price = EMAIndicator(sampling_length=volatility_buffer_size,
         #                               underlying_type="price")
@@ -164,6 +164,10 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         self._debug_csv_path = debug_csv_path
         self._is_debug = is_debug
         self._estimate_drift = estimate_drift
+        self._r_2 = None
+        self._reservation_price_prev = s_decimal_one
+        self._optimal_bid_prev = s_decimal_zero
+        self._optimal_ask_prev = s_decimal_zero
         try:
             if self._is_debug:
                 os.unlink(self._debug_csv_path)
@@ -374,6 +378,14 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         self._kappa = value
 
     @property
+    def r_2(self):
+        return self._r_2
+
+    @r_2.setter
+    def r_2(self, value):
+        self._r_2 = value
+
+    @property
     def eta(self):
         return self._eta
 
@@ -408,6 +420,30 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
     @optimal_bid.setter
     def optimal_bid(self, value):
         self._optimal_bid = value
+
+    @property
+    def reservation_price_prev(self):
+        return self._reservation_price_prev
+
+    @reservation_price_prev.setter
+    def reservation_price_prev(self, value):
+        self._reservation_price_prev = value
+
+    @property
+    def optimal_ask_prev(self):
+        return self._optimal_ask_prev
+
+    @optimal_ask_prev.setter
+    def optimal_ask_prev(self, value):
+        self._optimal_ask_prev = value
+
+    @property
+    def optimal_bid_prev(self):
+        return self._optimal_bid_prev
+
+    @optimal_bid_prev.setter
+    def optimal_bid_prev(self, value):
+        self._optimal_bid_prev = value
 
     @property
     def execution_timeframe(self):
@@ -701,9 +737,13 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         if self._create_timestamp <= self._current_timestamp:
             # 1. Calculate reservation price and optimal spread from gamma, alpha, kappa and volatility
             self.c_calculate_reservation_price_and_optimal_spread()
+            self.logger().info(f"Conditions du Refresh \n"
+                                f"delta_reserv_price: {abs(self._reservation_price - self._reservation_price_prev)/self._reservation_price_prev:.6f} \n"
+                                f"delta_opt_bid_price: {abs(self._optimal_bid - self._optimal_bid_prev)/self._reservation_price_prev:.6f} \n"
+                                f"delta_opt_ask_price: {abs(self._optimal_ask - self._optimal_ask_prev)/self._reservation_price_prev:.6f} \n")
             # 2. Check if calculated prices make sense
             if self._optimal_bid > 0 and self._optimal_ask > 0:
-                # 3. Create base order proposals
+                 # 3. Create base order proposals
                 proposal = self.c_create_base_proposal()
                 # 4. Apply functions that modify orders amount
                 self.c_apply_order_amount_eta_transformation(proposal)
@@ -711,11 +751,18 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                 self.c_apply_order_price_modifiers(proposal)
                 # 6. Apply budget constraint, i.e. can't buy/sell more than what you have.
                 self.c_apply_budget_constraint(proposal)
+                self.c_cancel_active_orders(proposal)         
 
-                self.c_cancel_active_orders(proposal)
 
         if self.c_to_create_orders(proposal):
             self.c_execute_orders_proposal(proposal)
+            if abs(self._reservation_price - self._reservation_price_prev)/self._reservation_price_prev > self._order_refresh_tolerance_pct or abs(self._optimal_bid - self._optimal_bid_prev)/self._reservation_price_prev > self._order_refresh_tolerance_pct or abs(self._optimal_ask - self._optimal_ask_prev)/self._reservation_price_prev > self._order_refresh_tolerance_pct:
+                    self.logger().info(f"Refresh | reservation_price_prev : {self._reservation_price_prev:.6f} | reservation_price : {self._reservation_price:.6f}")
+                    self.logger().info(f"        | optimal_bid_prev : {self._optimal_bid_prev:.6f} | optimal_bid : {self._optimal_bid:.6f}")
+                    self.logger().info(f"        | optimal_ask_prev : {self._optimal_ask_prev:.6f} | optimal_ask : {self._optimal_ask:.6f}")
+                    self._reservation_price_prev = Decimal(self._reservation_price)
+                    self._optimal_bid_prev = Decimal(self._optimal_bid)
+                    self._optimal_ask_prev = Decimal(self._optimal_ask)
 
         if self._is_debug:
             self.dump_debug_variables(timestamp)
@@ -781,14 +828,16 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
 
     cdef c_measure_order_book_liquidity(self):
 
-        self._alpha, self._kappa = self._trading_intensity.current_value
+        self._alpha, self._kappa, self._r_2 = self._trading_intensity.current_value
 
         self._alpha = Decimal(self._alpha)
         self._kappa = Decimal(self._kappa)
+        self._r_2 = Decimal(self._r_2)
 
         if self._is_debug:
             self.logger().info(f"alpha={self._alpha:.4f} | "
-                               f"kappa={self._kappa:.4f}")
+                               f"kappa={self._kappa:.4f} | "
+                               f"r_2={self._r_2:.4f}")
 
     def measure_order_book_liquidity(self):
         return self.c_measure_order_book_liquidity()
@@ -817,7 +866,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         fee_rate = market.c_get_fee(self.base_asset, self.quote_asset,
                                OrderType.LIMIT, TradeType.BUY, Decimal(1), price)
 
-        fee = Decimal(fee_rate.percent)
+        fee = Decimal(fee_rate.percent*2)
         market_impact = Decimal(self._trading_intensity.avg_impact)
         # order book liquidity - kappa and alpha have to represent absolute values because the second member of the optimal spread equation has to be an absolute price
         # and from the reservation price calculation we know that gamma's unit is not absolute price
@@ -1293,13 +1342,15 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
             )
 
     cdef bint c_is_within_tolerance(self, list current_prices, list proposal_prices):
+        if abs(self._reservation_price - self._reservation_price_prev)/self._reservation_price_prev > self._order_refresh_tolerance_pct or abs(self._optimal_bid - self._optimal_bid_prev)/self._reservation_price_prev > self._order_refresh_tolerance_pct or abs(self._optimal_ask - self._optimal_ask_prev)/self._reservation_price_prev > self._order_refresh_tolerance_pct:
+            return False
         if len(current_prices) != len(proposal_prices):
             return False
         current_prices = sorted(current_prices)
         proposal_prices = sorted(proposal_prices)
         for current, proposal in zip(current_prices, proposal_prices):
             # if spread diff is more than the tolerance or order quantities are different, return false.
-            if abs(proposal - current) / current > self._order_refresh_tolerance_pct:
+            if abs(proposal - current) / current > self._order_refresh_tolerance_pct/2:
                 return False
         return True
 
@@ -1351,7 +1402,6 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
     cdef bint c_to_create_orders(self, object proposal):
         non_hanging_orders_non_cancelled = [o for o in self.active_non_hanging_orders if not
                                             self._hanging_orders_tracker.is_potential_hanging_order(o)]
-
         return (self._create_timestamp < self._current_timestamp
                 and (not self._should_wait_order_cancel_confirmation or
                      len(self._sb_order_tracker.in_flight_cancels) == 0)
@@ -1469,6 +1519,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                                        'gamma',
                                        'alpha',
                                        'kappa',
+                                       'r_2',
                                        'eta',
                                        'volatility',
                                        'mid_price_variance',
@@ -1495,7 +1546,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
 
         price_change = self._trading_intensity.price_changes[-1]
         order_imbalance = self._trading_intensity.net_volume[-1]
-        t = pd.to_datetime(timestamp)
+        t = timestamp#pd.to_datetime(timestamp)
         df = pd.DataFrame([(t,
                             mid_price,
                             best_bid,
@@ -1504,8 +1555,8 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                             self._optimal_spread,
                             self._optimal_bid,
                             self._optimal_ask,
-                            (mid_price - (self._reservation_price - self._optimal_spread / 2)) / mid_price,
-                            ((self._reservation_price + self._optimal_spread / 2) - mid_price) / mid_price,
+                            (mid_price - (self._reservation_price - self._optimal_spread)) / mid_price,
+                            ((self._reservation_price + self._optimal_spread) - mid_price) / mid_price,
                             market.get_balance(self.base_asset),
                             self.c_calculate_target_inventory(),
                             time_left_fraction,
@@ -1514,6 +1565,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                             self._gamma,
                             self._alpha,
                             self._kappa,
+                            self._r_2,
                             self._eta,
                             vol,
                             mid_price_variance,
@@ -1524,7 +1576,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                             self.ema_vol.current_value,
                             price_change,
                             order_imbalance,
-                            self.avg_drift.current_value * self.order_refresh_time,
+                            self.avg_drift.current_value,
                             self._trading_intensity.median_price_impact,
                             self._trading_intensity.avg_impact,
                             self._trading_intensity.avg_bid_ask_spread,
