@@ -99,6 +99,8 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                     is_debug: bool = True,
                     tick_size: float = 0.001,
                     estimate_drift: bool = False,
+                    profitability: Decimal = 0,
+                    market_impact_buffer: int = 30,
                     ):
         self._sb_order_tracker = OrderTracker()
         self._market_info = market_info
@@ -131,10 +133,8 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
 
         self.c_add_markets([market_info.market])
         self._ticks_to_be_ready = max(volatility_buffer_size, trading_intensity_buffer_size)
-        self._avg_vol = VolatilityAB_Indicator(sampling_length=volatility_buffer_size,
-                                                   processing_length=int(order_refresh_time))
-        self._avg_drift = DriftAB_Indicator(sampling_length=volatility_buffer_size,
-                                            processing_length=int(order_refresh_time))
+        self._avg_vol = InstantVolatilityIndicator(sampling_length=volatility_buffer_size)
+        self._avg_drift = DriftAB_Indicator(sampling_length=volatility_buffer_size)
         # self._ema_price = EMAIndicator(sampling_length=volatility_buffer_size,
         #                               underlying_type="price")
         # self._ema_diff = EMAIndicator(sampling_length=volatility_buffer_size,
@@ -144,7 +144,8 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         self._ouprocess = OUModelIndicator(sampling_length=volatility_buffer_size)
         self._trading_intensity = TradingIntensityIndicator(order_refresh_time=order_refresh_time,
                                                             sampling_length=trading_intensity_buffer_size,
-                                                            delta_spread=tick_size)
+                                                            delta_spread=tick_size,
+                                                            market_impact_buffer=market_impact_buffer)
         self._last_sampling_timestamp = 0
         self._alpha = None
         self._kappa = None
@@ -168,6 +169,8 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         self._reservation_price_prev = s_decimal_one
         self._optimal_bid_prev = s_decimal_zero
         self._optimal_ask_prev = s_decimal_zero
+        self._profitability = profitability
+
         try:
             if self._is_debug:
                 os.unlink(self._debug_csv_path)
@@ -641,7 +644,8 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
                           f"    volatility= {volatility_pct:.3f}%",
                           f"    volatility= {self._avg_vol.current_value:.5E}",
                           f"    drift= {self._avg_drift.current_value:.5E}",
-                          f"    drift= {drift_pct:.3f}%"])
+                          f"    drift= {drift_pct:.3f}%",
+                          f"    avg_impact= {self._trading_intensity.avg_impact}"])
             if self._execution_state.time_left is not None:
                 lines.extend([f"    time until end of trading cycle = {str(datetime.timedelta(seconds=float(self._execution_state.time_left)//1e3))}"])
             else:
@@ -866,7 +870,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         fee_rate = market.c_get_fee(self.base_asset, self.quote_asset,
                                OrderType.LIMIT, TradeType.BUY, Decimal(1), price)
 
-        fee = Decimal(fee_rate.percent*2)
+        fee = Decimal(fee_rate.percent) * Decimal(1 + self._profitability)
         market_impact = Decimal(self._trading_intensity.avg_impact)
         # order book liquidity - kappa and alpha have to represent absolute values because the second member of the optimal spread equation has to be an absolute price
         # and from the reservation price calculation we know that gamma's unit is not absolute price

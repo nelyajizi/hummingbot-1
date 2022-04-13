@@ -73,14 +73,14 @@ order_override: null
 
 # Avellaneda - Stoikov algorithm parameters
 risk_factor: 1
-order_amount_shape_factor: 0
+order_amount_shape_factor: 0.1
 min_spread: 0
 
 # Buffer size used to store historic samples and calculate volatility
-volatility_buffer_size: 60
+volatility_buffer_size: 200
 
 # Buffer size used to store historic trades and calculate order book liquidity
-trading_intensity_buffer_size: 200
+trading_intensity_buffer_size: 50
 
 # If the strategy should wait to receive cancellations confirmation before creating new orders during refresh time
 should_wait_order_cancel_confirmation: True
@@ -89,3 +89,6 @@ tick_size: 0.001
 
 estimate_drift: False
 
+profitability: null
+
+market_impact_buffer: 10

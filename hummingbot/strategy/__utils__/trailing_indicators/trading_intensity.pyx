@@ -23,7 +23,8 @@ cdef class TradingIntensityIndicator():
             intensity_logger = logging.getLogger(__name__)
         return intensity_logger
 
-    def __init__(self, order_refresh_time = 1, sampling_length: int = 30, delta_spread=0.001):
+    def __init__(self, order_refresh_time = 1, sampling_length: int = 30, delta_spread: float = 0.001,
+                 market_impact_buffer: int = 10):
         self._alpha = 0
         self._kappa = 0
         self._old_kappa = 0
@@ -61,6 +62,7 @@ cdef class TradingIntensityIndicator():
         self._order_imbalance = np.nan
         self._delta_spread = delta_spread
         self._r_2 = 0
+        self._market_impact_buffer = market_impact_buffer
 
     warnings.simplefilter("ignore", OptimizeWarning)
 
@@ -106,6 +108,10 @@ cdef class TradingIntensityIndicator():
         bid_prev = _bids_df["price"].iloc[0]
         ask_prev = _asks_df["price"].iloc[0]
         price_prev = (bid_prev + ask_prev) / 2
+
+        if price_prev is np.nan:
+            self.logger().info("price_prev is nan")
+            return
 
         diff = price - price_prev
         if diff != 0:
@@ -308,9 +314,10 @@ cdef class TradingIntensityIndicator():
             self._kappa = Decimal(kappa)
             self._r_2 = Decimal(r_2)
             # 10 dernières valeurs
-            self._median_price_impact = np.median(self._abs_price_changes [len(self._abs_price_changes)-10:])
-            self._avg_impact = np.mean(self._abs_price_changes [len(self._abs_price_changes)-10:])
-            self.logger().info(f"avg_impact: {self._avg_impact:.6f}")
+            if len(self._abs_price_changes) > self._market_impact_buffer:
+                self._median_price_impact = np.median(self._abs_price_changes[-self._market_impact_buffer:])
+                self._avg_impact = np.mean(self._abs_price_changes[-self._market_impact_buffer:])
+                self.logger().info(f"avg_impact: {self._avg_impact:.6f}")
 
             # self.logger().info(f"calculating Kyle's lambda:")
             # if len(self.price_changes) > 3:

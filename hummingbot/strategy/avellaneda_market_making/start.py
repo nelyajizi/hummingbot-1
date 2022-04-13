@@ -67,6 +67,8 @@ def start(self):
         if execution_timeframe == "infinite":
             execution_state = RunAlwaysExecutionState()
 
+        market_impact_buffer = c_map.get("market_impact_buffer").value
+        profitability = c_map.get("profitability").value
         min_spread = c_map.get("min_spread").value
         tick_size = c_map.get("tick_size").value
         estimate_drift = c_map.get("estimate_drift").value
@@ -108,7 +110,9 @@ def start(self):
             should_wait_order_cancel_confirmation=should_wait_order_cancel_confirmation,
             is_debug=True,
             tick_size=tick_size,
-            estimate_drift=estimate_drift
+            estimate_drift=estimate_drift,
+            profitability=profitability,
+            market_impact_buffer=market_impact_buffer
         )
     except Exception as e:
         self._notify(str(e))

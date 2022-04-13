@@ -41,6 +41,7 @@ cdef class TradingIntensityIndicator():
         double _order_imbalance
         double _delta_spread
         double _r_2
+        int _market_impact_buffer
 
 
     cdef c_simulate_execution(self, bids_df, asks_df)

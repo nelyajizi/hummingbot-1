@@ -69,6 +69,7 @@ cdef class AvellanedaMarketMakingStrategy(StrategyBase):
         object _reservation_price_prev
         object _optimal_bid_prev
         object _optimal_ask_prev
+        double _profitability
 
     cdef object c_get_mid_price(self)
     cdef object c_get_order_book_snapshot(self)

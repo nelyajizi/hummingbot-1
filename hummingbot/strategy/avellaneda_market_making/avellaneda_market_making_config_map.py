@@ -254,4 +254,20 @@ avellaneda_market_making_config_map = {
                   type_str="bool",
                   default=False,
                   validator=validate_bool),
+
+    "profitability":
+        ConfigVar(key="profitability",
+                  prompt="what is the expected profitability ?"
+                         " proportional to fee_rate = fee_rate*(1+profitability) >>> ",
+                  type_str="decimal",
+                  validator=lambda v: validate_decimal(v, Decimal(0), inclusive=True),
+                  default=Decimal("0")),
+
+    "market_impact_buffer":
+        ConfigVar(key="market_impact_buffer",
+                  prompt="how much trades to use in market impact estimate  >>> ",
+                  type_str="int",
+                  validator=lambda v: validate_int(v, 1, 10000),
+                  default=200,
+                  prompt_on_new=True),
 }
